@@ -5047,6 +5047,11 @@ bool JOIN::add_sorting_to_table(uint idx, ORDER_with_src *sort_order,
   // rows that have no reference to the underlying table object.
   bool force_sort_rowids = false;
   for (plan_idx i = 0; i <= static_cast<plan_idx>(idx); ++i) {
+    if (qep_tab[i].table_ref &&
+        qep_tab[i].table_ref->opt_hints_qb->filesort_hint()) {
+      force_sort_rowids = true;
+      break;
+    }
     if (!qep_tab[i].starts_weedout()) {
       continue;
     }

@@ -86,6 +86,7 @@ enum opt_hints_enum {
   GROUP_INDEX_HINT_ENUM,
   ORDER_INDEX_HINT_ENUM,
   DERIVED_CONDITION_PUSHDOWN_HINT_ENUM,
+  FILESORT_FORCE_SORT_ROWID_HINT_ENUM,
   MAX_HINT_ENUM
 };
 
@@ -379,7 +380,7 @@ class Opt_hints_qb : public Opt_hints {
   LEX_CSTRING sys_name;  // System QB name
   char buff[32];         // Buffer to hold sys name
 
-  PT_qb_level_hint *subquery_hint, *semijoin_hint;
+  PT_qb_level_hint *subquery_hint, *semijoin_hint, *m_filesort_hint{nullptr};
 
   /// Array of join order hints
   Mem_root_array<PT_qb_level_hint *> join_order_hints;
@@ -485,6 +486,8 @@ class Opt_hints_qb : public Opt_hints {
     @param join JOIN object
   */
   void apply_join_order_hints(JOIN *join);
+
+  PT_qb_level_hint *filesort_hint() const { return m_filesort_hint; }
 
  private:
   void register_join_order_hint(PT_qb_level_hint *hint_arg) {

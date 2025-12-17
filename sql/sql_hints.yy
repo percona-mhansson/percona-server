@@ -137,6 +137,8 @@ static bool parse_int(longlong *to, const char *from, size_t from_length)
 %token NO_DERIVED_CONDITION_PUSHDOWN_HINT 1048
 %token HINT_ARG_FLOATING_POINT_NUMBER 1049
 
+%token FILESORT_FORCE_SORT_ROWID_HINT
+
 /*
   YYUNDEF is internal to Bison. Please don't change its number, or change
   it in sync with YYUNDEF in sql_yacc.yy.
@@ -424,6 +426,13 @@ qb_level_hint:
           JOIN_FIXED_ORDER_HINT '(' opt_qb_name  ')'
           {
             $$= NEW_PTN PT_qb_level_hint($3, true, JOIN_FIXED_ORDER_HINT_ENUM, 0);
+            if ($$ == nullptr)
+              YYABORT; // OOM
+          }
+          |
+          FILESORT_FORCE_SORT_ROWID_HINT
+          {
+            $$= NEW_PTN PT_qb_level_hint(NULL_CSTR, true, FILESORT_FORCE_SORT_ROWID_HINT_ENUM, 0);
             if ($$ == nullptr)
               YYABORT; // OOM
           }

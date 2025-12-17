@@ -271,6 +271,10 @@ bool PT_qb_level_hint::do_contextualize(Parse_context *pc) {
       else
         pc->select->add_base_options(SELECT_STRAIGHT_JOIN);
       break;
+    case FILESORT_FORCE_SORT_ROWID_HINT_ENUM:
+      qb->m_filesort_hint = this;
+      break;
+
     default:
       assert(0);
   }

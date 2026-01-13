@@ -1,0 +1,24 @@
+CREATE TABLE t1 (
+a VECTOR(3)
+);
+CREATE VECTOR INDEX vi ON t1( a );
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` vector(3) DEFAULT NULL,
+  VECTOR KEY `vi` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+INSERT INTO t1 VALUES ( string_to_vector('[1,2,3]') );
+SELECT * FROM t1;
+a
+0x0000803F0000004000004040
+EXPLAIN FORMAT=TREE
+SELECT * FROM t1 WHERE a = string_to_vector( '[1,2,3]' );
+EXPLAIN
+-> Filter: (t1.a = <cache>(to_vector('[1,2,3]')))  (cost=0.35 rows=1)
+    -> Index lookup on t1 using vi (a = to_vector('[1,2,3]'))  (cost=0.35 rows=1)
+
+SELECT * FROM t1 WHERE a = string_to_vector( '[1,2,3]' );
+a
+0x0000803F0000004000004040
+DROP TABLE t1;

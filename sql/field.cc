@@ -9198,6 +9198,7 @@ uint32 calc_key_length(enum_field_types sql_type, uint32 length,
     case MYSQL_TYPE_BLOB:
     case MYSQL_TYPE_GEOMETRY:
     case MYSQL_TYPE_JSON:
+    case MYSQL_TYPE_VECTOR:
       return 0;
     case MYSQL_TYPE_VARCHAR:
       return length;

@@ -5153,13 +5153,6 @@ static bool prepare_key_column(THD *thd, HA_CREATE_INFO *create_info,
     return true;
   }
 
-  // VECTOR columns cannot be used as keys
-  if (sql_field->sql_type == MYSQL_TYPE_VECTOR &&
-      !(key_info->flags & HA_VECTOR)) {
-    my_error(ER_NON_SCALAR_USED_AS_KEY, MYF(0), column->get_field_name());
-    return true;
-  }
-
   if (sql_field->auto_flags & Field::NEXT_NUMBER) {
     if (column_nr == 0 || (file->ha_table_flags() & HA_AUTO_PART_KEY))
       (*auto_increment)--;  // Field is used
@@ -5207,7 +5200,7 @@ static bool prepare_key_column(THD *thd, HA_CREATE_INFO *create_info,
     */
     column_length = is_blob(sql_field->sql_type);
   } else if (key->type == KEYTYPE_VECTOR) {
-    column_length = 1; // Dummy value.
+    column_length = 0; // Dummy value.
   } else {
     switch (sql_field->sql_type) {
       case MYSQL_TYPE_GEOMETRY:

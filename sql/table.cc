@@ -3476,7 +3476,8 @@ int closefrm(TABLE *table, bool free_share) {
       for (KEY_PART_INFO *key_part_end = key_part + key_info->actual_key_parts;
            key_part < key_part_end; key_part++) {
         if (key_part->field && key_part->field->is_flag_set(BLOB_FLAG) &&
-            key_part->field->type() != MYSQL_TYPE_GEOMETRY) {
+            key_part->field->type() != MYSQL_TYPE_GEOMETRY &&
+            key_part->field->type() != MYSQL_TYPE_VECTOR) {
           ::destroy_at(key_part->field);
           key_part->field = nullptr;
         }

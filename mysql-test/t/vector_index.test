@@ -1,0 +1,16 @@
+CREATE TABLE t1 (
+    a VECTOR(3)
+);
+
+CREATE VECTOR INDEX vi ON t1( a );
+
+SHOW CREATE TABLE t1;
+
+INSERT INTO t1 VALUES ( string_to_vector('[1,2,3]') );
+SELECT * FROM t1;
+
+EXPLAIN FORMAT=TREE
+SELECT * FROM t1 WHERE a = string_to_vector( '[1,2,3]' );
+SELECT * FROM t1 WHERE a = string_to_vector( '[1,2,3]' );
+
+DROP TABLE t1;

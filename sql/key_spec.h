@@ -45,7 +45,7 @@ enum keytype {
   KEYTYPE_SPATIAL = 8,
   KEYTYPE_FOREIGN = 16,
   KEYTYPE_CLUSTERING = 32,
-  KEYTYPE_VECTOR = 64
+  KEYTYPE_VECTOR = 64,
 };
 
 enum fk_option {

@@ -451,7 +451,9 @@ static bool prepare_share(THD *thd, TABLE_SHARE *share,
             continue;
           }
 #endif
-          key_part->key_part_flag |= HA_PART_KEY_SEG;
+          if (field->type() != MYSQL_TYPE_VECTOR) {
+            key_part->key_part_flag |= HA_PART_KEY_SEG;
+          }
         }
 
         /*

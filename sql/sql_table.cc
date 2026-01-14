@@ -49,6 +49,7 @@
 #include <utility>
 
 /* HAVE_PSI_*_INTERFACE */
+#include "key_spec.h"
 #include "my_psi_config.h"  // IWYU pragma: keep
 
 /* drop_table_share with WITH_LOCK_ORDER */
@@ -7743,6 +7744,8 @@ static bool prepare_key(
       break;
     case KEYTYPE_CLUSTERING:
       assert(0);
+    case KEYTYPE_VECTOR:
+      break;
     default:
       assert(false);
       return true;

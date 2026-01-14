@@ -3797,6 +3797,7 @@ class Field_vector : public Field_blob {
   bool eq_def(const Field *field) const override;
   uint is_equal(const Create_field *new_field) const override;
   String *val_str(String *, String *) const override;
+  uint32 key_length() const override { return get_length(ptr); }
 };
 
 void store_blob_length(uchar *i_ptr, uint i_packlength, uint32 i_number);

@@ -76,6 +76,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "my_dbug.h"
 
+using std::uint32_t;
+
 /** Maximum number of rows to prefetch; MySQL interface has another parameter */
 constexpr uint32_t SEL_MAX_N_PREFETCH = 16;
 

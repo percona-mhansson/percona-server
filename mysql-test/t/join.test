@@ -2140,4 +2140,20 @@ FROM t1 AS ra1 LEFT JOIN t1 AS ra2
      ON ra3.k = ra3.k
 WHERE ra3.k <= ra1.k;
 
+--echo #
+--echo # Bug#38448700: Server crash with EXPLAIN SELECT on
+--echo # LEFT JOIN with derived table
+--echo # containing stored function and GROUP BY
+--echo #
+
+CREATE TABLE t1 ( a INT );
+INSERT INTO t1 VALUES (1);
+
+DELIMITER //;
+CREATE FUNCTION f(I INT) RETURNS INT DETERMINISTIC RETURN i + 1 //
+DELIMITER ;//
+
+EXPLAIN SELECT * FROM t1 LEFT JOIN (SELECT t1.a AS a FROM t1 WHERE f(t1.a) GROUP BY a HAVING FALSE) tf ON t1.a = tf.a;
+
+DROP FUNCTION f;
 DROP TABLE t1;

@@ -4326,6 +4326,130 @@ String *Item_func_from_vector::val_str_ascii(String *str) {
   return &buffer;
 }
 
+bool Item_func_vec_distance::resolve_type(THD *thd) {
+  if (param_type_is_default(thd, 0, 2, MYSQL_TYPE_VECTOR)) {
+    return true;
+  }
+
+  for (uint i = 0; i < 2; ++i) {
+    if (!(args[i]->data_type() == MYSQL_TYPE_VECTOR ||
+          (args[i]->result_type() == STRING_RESULT &&
+           args[i]->collation.collation == &my_charset_bin))) {
+      my_error(ER_WRONG_ARGUMENTS, MYF(0), func_name());
+      return true;
+    }
+  }
+
+  // Let us prohibit non-literal metric names right away, to make
+  // optimizer life easier. These is not something going to happen
+  // in practice anyway.
+  if (!args[2]->basic_const_item()) {
+    my_error(ER_WRONG_ARGUMENTS, MYF(0), func_name());
+    return true;
+  }
+
+  String tmp, *metric_n = args[2]->val_str_ascii(&tmp);
+
+  if (metric_n == nullptr) {
+    my_error(ER_WRONG_ARGUMENTS, MYF(0), func_name());
+    return true;
+  }
+
+  if (!my_strcasecmp(&my_charset_latin1, metric_n->c_ptr(), "euclidean")) {
+    m_metric = EUCLIDEAN;
+  } else if (!my_strcasecmp(&my_charset_latin1, metric_n->c_ptr(), "cosine")) {
+    m_metric = COSINE;
+  } else {
+    my_error(ER_WRONG_ARGUMENTS, MYF(0), func_name());
+    return true;
+  }
+
+  return false;
+}
+
+static double simple_euclidean(const char *a, const char *b, uint32 dims) {
+  float result = 0.0;
+  for (uint32_t i = 0; i < dims; i++) {
+    // There is no guarantee that 'a' and 'b' are properly aligned in general
+    // case (e.g. they can be result from SUBSTR or RIGHT functions).
+    // So we have to use the below akward way to read floats from them.
+    // TODO: OTOH in most common cases they are likely to be aligned
+    //       (literals, vector fields, results of TO_VECTOR function), so we
+    //       should study if it makes sense to implement version of this
+    //       function with optimized reading.
+    // TODO: Implement optimized version of this function using SSE/AVX et
+    //       cetera.
+    float a_value, b_value;
+    memcpy(&a_value, a, sizeof(float));
+    a += sizeof(float);
+    memcpy(&b_value, b, sizeof(float));
+    b += sizeof(float);
+    const float d = a_value - b_value;
+    result += d * d;
+  }
+  return sqrt(result);
+}
+
+static double simple_cosine(const char *a, const char *b, uint32 dims) {
+  float ab = 0.0;
+  float norm_a = 0.0;
+  float norm_b = 0.0;
+  for (uint32_t i = 0; i < dims; i++) {
+    float a_value, b_value;
+    memcpy(&a_value, a, sizeof(float));
+    a += sizeof(float);
+    memcpy(&b_value, b, sizeof(float));
+    b += sizeof(float);
+    ab += a_value * b_value;
+    norm_a += a_value * a_value;
+    norm_b += b_value * b_value;
+  }
+  return 1.0 - double(ab) / sqrt((double)norm_a * (double)norm_b);
+}
+
+double Item_func_vec_distance::val_real() {
+  assert(fixed);
+  null_value = false;
+
+  String buff_a, buff_b;
+  String *a = args[0]->val_str(&buff_a);
+  if (a == nullptr || a->ptr() == nullptr) {
+    return error_real();
+  }
+
+  uint32 a_dims = get_dimensions(a->length(), Field_vector::precision);
+  if (a_dims == UINT32_MAX) {
+    my_error(ER_TO_VECTOR_CONVERSION, MYF(0), a->length(), a->ptr());
+    return error_real();
+  }
+
+  String *b = args[1]->val_str(&buff_b);
+  if (b == nullptr || b->ptr() == nullptr) {
+    return error_real();
+  }
+
+  uint32 b_dims = get_dimensions(b->length(), Field_vector::precision);
+  if (b_dims == UINT32_MAX) {
+    my_error(ER_TO_VECTOR_CONVERSION, MYF(0), b->length(), b->ptr());
+    return error_real();
+  }
+
+  if (a_dims != b_dims) {
+    my_error(ER_WRONG_ARGUMENTS, MYF(0), func_name());
+    return error_real();
+  }
+
+  switch (m_metric) {
+    case EUCLIDEAN:
+      return simple_euclidean(a->ptr(), b->ptr(), a_dims);
+    case COSINE:
+      return simple_cosine(a->ptr(), b->ptr(), a_dims);
+    default:
+      assert(false);
+      return 0.0;
+  }
+}
+
 String *Item_func_uncompress::val_str(String *str) {
   assert(fixed);
   String *res = args[0]->val_str(str);

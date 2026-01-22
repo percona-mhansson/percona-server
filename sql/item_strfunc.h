@@ -1327,6 +1327,18 @@ class Item_func_from_vector final : public Item_str_ascii_func {
   String *val_str_ascii(String *str) override;
 };
 
+class Item_func_vec_distance final : public Item_real_func {
+  enum metric_type { EUCLIDEAN, COSINE };
+  metric_type m_metric{EUCLIDEAN};
+
+ public:
+  Item_func_vec_distance(const POS &pos, Item *a, Item *b, Item *c)
+      : Item_real_func(pos, a, b, c) {}
+  bool resolve_type(THD *thd) override;
+  const char *func_name() const override { return "distance"; }
+  double val_real() override;
+};
+
 class Item_func_uncompress final : public Item_str_func {
   String buffer;
 

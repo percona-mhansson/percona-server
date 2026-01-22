@@ -1398,6 +1398,7 @@ static const std::pair<const char *, Create_func *> func_array[] = {
     {"DAYOFWEEK", SQL_FACTORY(Dayofweek_instantiator)},
     {"DAYOFYEAR", SQL_FN(Item_func_dayofyear, 1)},
     {"DEGREES", SQL_FN(Item_func_degrees, 1)},
+    {"DISTANCE", SQL_FN(Item_func_vec_distance, 3)},
     {"ELT", SQL_FN_V(Item_func_elt, 2, MAX_ARGLIST_SIZE)},
     {"ETAG", SQL_FN_V(Item_func_etag, 1, MAX_ARGLIST_SIZE)},
     {"EXP", SQL_FN(Item_func_exp, 1)},

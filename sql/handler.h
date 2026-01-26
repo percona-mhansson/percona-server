@@ -535,6 +535,7 @@ enum class SelectExecutedIn : bool { kPrimaryEngine, kSecondaryEngine };
   ANALYZE TABLE on it
 */
 #define HA_ONLINE_ANALYZE (1LL << 56)
+#define HA_CAN_VECTOR     (1LL << 57)
 
 /*
   Bits in index_flags(index_number) for what you can do with index.

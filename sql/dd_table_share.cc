@@ -226,6 +226,9 @@ static enum ha_key_alg dd_get_old_index_algorithm_type(
     case dd::Index::IA_FULLTEXT:
       return HA_KEY_ALG_FULLTEXT;
 
+    case dd::Index::IA_VECTOR:
+      return HA_KEY_ALG_VECTOR;
+
     default:
       assert(!"Should not hit here"); /* purecov: deadcode */
   }
@@ -345,6 +348,8 @@ static bool prepare_share(THD *thd, TABLE_SHARE *share,
              share->key_info[key].algorithm == HA_KEY_ALG_FULLTEXT);
       assert(!(share->key_info[key].flags & HA_SPATIAL) ||
              share->key_info[key].algorithm == HA_KEY_ALG_RTREE);
+      assert(!(share->key_info[key].flags & HA_VECTOR) ||
+             share->key_info[key].algorithm == HA_KEY_ALG_VECTOR);
 
       if (primary_key >= MAX_KEY && (keyinfo->flags & HA_NOSAME)) {
         /*
@@ -1392,6 +1397,9 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
       break;
     case dd::Index::IT_SPATIAL:
       keyinfo->flags = HA_SPATIAL;
+      break;
+    case dd::Index::IT_VECTOR:
+      keyinfo->flags = HA_VECTOR;
       break;
     case dd::Index::IT_PRIMARY:
     case dd::Index::IT_UNIQUE:

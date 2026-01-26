@@ -1656,6 +1656,7 @@ bool Field::type_can_have_key_part(enum enum_field_types type) {
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_STRING:
     case MYSQL_TYPE_GEOMETRY:
+    case MYSQL_TYPE_VECTOR:
       return true;
     default:
       return false;

@@ -782,7 +782,8 @@ size_t Create_field::key_length() const {
     case MYSQL_TYPE_JSON:
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_STRING:
-    case MYSQL_TYPE_VARCHAR: {
+    case MYSQL_TYPE_VARCHAR:
+    case MYSQL_TYPE_VECTOR: { // Should not be used in practice.
       return std::min(max_display_width_in_bytes(),
                       static_cast<size_t>(MAX_FIELD_BLOBLENGTH));
     }
@@ -796,10 +797,6 @@ size_t Create_field::key_length() const {
       }
       return pack_length() + (max_display_width_in_bytes() & 7 ? 1 : 0);
     }
-    /* LCOV_EXCL_START */
-    case MYSQL_TYPE_VECTOR:
-      assert(false);  // Key on VECTOR type column is not supported.
-    /* LCOV_EXCL_STOP */
     default: {
       return pack_length(is_array);
     }

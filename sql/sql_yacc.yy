@@ -3579,6 +3579,16 @@ create_index_stmt:
                                              $11.algo.get_or_default(),
                                              $11.lock.get_or_default());
           }
+        | CREATE VECTOR_SYM INDEX_SYM ident ON_SYM table_ident
+          '(' key_list_with_expression ')' opt_index_lock_and_algorithm
+          {
+            Index_options empty_options;
+            empty_options.init(YYMEM_ROOT);
+            $$= NEW_PTN PT_create_index_stmt(@$, YYMEM_ROOT, KEYTYPE_VECTOR, $4,
+                                             nullptr, $6, $8, empty_options,
+                                             $10.algo.get_or_default(),
+                                             $10.lock.get_or_default());
+          }
         ;
 /*
   Only a limited subset of <expr> are allowed in
@@ -7073,6 +7083,13 @@ table_constraint_def:
           opt_spatial_index_options
           {
             $$= NEW_PTN PT_inline_index_definition(@$, KEYTYPE_SPATIAL, $3, nullptr, $5, $7);
+          }
+        | VECTOR_SYM opt_key_or_index opt_ident '(' key_list_with_expression ')'
+          {
+            Index_options empty_options;
+            empty_options.init(YYMEM_ROOT);
+            $$= NEW_PTN PT_inline_index_definition(@$, KEYTYPE_VECTOR, $3,
+                                                   nullptr, $5, empty_options);
           }
         | opt_constraint_name constraint_key_type opt_index_name_and_type
           '(' key_list_with_expression ')' opt_index_options
@@ -16449,7 +16466,6 @@ ident_keywords_unambiguous:
         | XML_SYM
         | YEAR_SYM
         | ZONE_SYM
-        | VECTOR_SYM
         ;
 
 /*

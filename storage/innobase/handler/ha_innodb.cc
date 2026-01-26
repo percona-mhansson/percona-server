@@ -3230,7 +3230,7 @@ ha_innobase::ha_innobase(handlerton *hton, TABLE_SHARE *table_arg)
           HA_ATTACHABLE_TRX_COMPATIBLE | HA_CAN_INDEX_VIRTUAL_GENERATED_COLUMN |
           HA_DESCENDING_INDEX | HA_MULTI_VALUED_KEY_SUPPORT |
           HA_BLOB_PARTIAL_UPDATE | HA_SUPPORTS_GEOGRAPHIC_GEOMETRY_COLUMN |
-          HA_SUPPORTS_DEFAULT_EXPRESSION | HA_ONLINE_ANALYZE),
+          HA_SUPPORTS_DEFAULT_EXPRESSION | HA_ONLINE_ANALYZE | HA_CAN_VECTOR),
       m_start_of_scan(),
       m_stored_select_lock_type(LOCK_NONE_UNSET),
       m_mysql_has_locked() {}
@@ -15771,12 +15771,19 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
             continue;
           case dd::Index::IT_FULLTEXT:
           case dd::Index::IT_SPATIAL:
+          case dd::Index::IT_VECTOR:
             ut_d(ut_error);
         }
         break;
       case dd::Index::IA_FULLTEXT:
         if (i->type() == dd::Index::IT_FULLTEXT) {
           has_fulltext = true;
+          continue;
+        }
+        ut_d(ut_error);
+        ut_o(break);
+      case dd::Index::IA_VECTOR:
+        if (i->type() == dd::Index::IT_VECTOR) {
           continue;
         }
         ut_d(ut_error);
@@ -15808,6 +15815,7 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
         case dd::Index::IT_MULTIPLE:
         case dd::Index::IT_FULLTEXT:
         case dd::Index::IT_SPATIAL:
+        case dd::Index::IT_VECTOR:
           my_error(ER_INNODB_FT_WRONG_DOCID_INDEX, MYF(0),
                    fts_doc_id_index->name().c_str());
           push_warning(thd, Sql_condition::SL_WARNING, ER_WRONG_NAME_FOR_INDEX,

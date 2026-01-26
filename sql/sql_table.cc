@@ -7744,8 +7744,6 @@ static bool prepare_key(
       break;
     case KEYTYPE_CLUSTERING:
       assert(0);
-    case KEYTYPE_VECTOR:
-      break;
     default:
       assert(false);
       return true;

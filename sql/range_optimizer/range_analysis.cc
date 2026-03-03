@@ -70,6 +70,8 @@
 #include "sql_string.h"
 #include "template_utils.h"
 
+bool is_prefix_index(TABLE *table, uint idx);
+
 /*
   A null_sel_tree is used in get_func_mm_tree_from_in_predicate to pass
   as an argument to tree_or. It is used only to influence the return
@@ -1400,7 +1402,7 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
   bool optimize_range;
   SEL_ROOT *tree = nullptr;
   MEM_ROOT *const alloc = param->temp_mem_root;
-  uchar *str;
+  uchar *str{nullptr};
   const char *impossible_cond_cause = nullptr;
   DBUG_TRACE;
 
@@ -1584,6 +1586,50 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
         &tree, value, type, field, &impossible_cond_cause, alloc,
         param->query_block, inexact);
 
+    if (always_true_or_false && *inexact && is_string_type(field->type())) {
+      // A search key couldn't be created because
+      // save_value_and_handle_conversion() is using a Field object to
+      // instantiate the search key. This particular Field object has a buffer
+      // that is the same size as the index, which may not be sufficient to hold
+      // the search key. If we leave it at that, we can't create a comprehensive
+      // set of ranges and we have to fall back to table scan. To avoid that, we
+      // allocate a larger buffer and create the search key here instead.
+      String buf;
+      auto *str_value = value->val_str(&buf);
+      const CHARSET_INFO *cs = field->charset();
+      size_t key_buf_len =
+          cs->coll->strnxfrmlen(cs, str_value->length() * cs->mbmaxlen);
+      size_t key_image_null_offset = field->is_nullable() ? 1 : 0;
+      size_t key_image_offset = key_image_null_offset + 2;
+      size_t key_image_len = key_image_offset + key_buf_len;
+      auto *key_buf = static_cast<char *>(alloc->Alloc(key_image_len));
+      // to do: handle nullptr
+      const char *well_formed_error_pos;
+      const char *cannot_convert_error_pos;
+      const char *from_end_pos;
+      auto nchars = key_buf_len / field->charset()->mbmaxlen;
+      auto copy_length = well_formed_copy_nchars(
+          field->charset(), key_buf + key_image_offset, str_value->length(),
+          field->charset(), str_value->ptr(), str_value->length(), nchars,
+          &well_formed_error_pos, &cannot_convert_error_pos, &from_end_pos);
+      // to do: handle errors
+      if (field->is_nullable()) {
+        key_buf[0] = char{field->is_real_null()};
+      }
+      if (is_prefix_index(field->table, key_part->key)) {
+        if (type == Item_func::LT_FUNC || type == Item_func::GT_FUNC) {
+          int2store(key_buf + key_image_null_offset, nchars);
+        } else {
+          // I have no idea why the /2 works.
+          int2store(key_buf + key_image_null_offset, field->field_length / 2);
+        }
+      } else {
+        int2store(key_buf + key_image_null_offset, copy_length);
+      }
+      str = reinterpret_cast<uchar *>(key_buf);
+      always_true_or_false = false;
+    }
+
     if (field->type() == MYSQL_TYPE_GEOMETRY &&
         save_geom_type != Field::GEOM_GEOMETRY) {
       down_cast<Field_geom *>(field)->geom_type = save_geom_type;
@@ -1602,12 +1648,15 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
     goto end;
   }
 
-  str = (uchar *)alloc->Alloc(key_part->store_length + 1);
-  if (!str) goto end;
-  if (field->is_nullable())
-    *str = (uchar)field->is_real_null();  // Set to 1 if null
-  field->get_key_image(str + null_bytes, key_part->length,
-                       key_part->image_type);
+  if (str == nullptr) {
+    // Create the search key if we didn't already.
+    str = (uchar *)alloc->Alloc(key_part->store_length + 1);
+    if (!str) goto end;
+    if (field->is_nullable())
+      *str = (uchar)field->is_real_null();  // Set to 1 if null
+    field->get_key_image(str + null_bytes, key_part->length,
+                         key_part->image_type);
+  }
   SEL_ARG *root;
   root =
       new (alloc) SEL_ARG(field, str, str, !(key_part->flag & HA_REVERSE_SORT));

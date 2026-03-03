@@ -1,0 +1,12 @@
+--echo #
+--echo # Bug#118009: SELECT query on primary key column deteriorates to full
+--echo #             table scan when filter involves too long string
+--echo #
+
+--let charset=utf8mb4
+--let collation=utf8mb4_0900_ai_ci
+--source bug.inc
+
+--let charset=utf16
+--let collation=utf16_unicode_520_ci
+--source bug.inc

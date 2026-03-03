@@ -1,0 +1,320 @@
+#
+# Bug#118009: SELECT query on primary key column deteriorates to full
+#             table scan when filter involves too long string
+#
+CREATE TABLE t1 ( pk VARCHAR(16) NOT NULL PRIMARY KEY ) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+INSERT INTO t1 VALUES ('abc'), ('def'), ('ghi'), ('jkl'), ('mno');
+ANALYZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	index	PRIMARY	PRIMARY	66	NULL	5	60.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('abc','this_value_is_>16','def'))
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+pk
+abc
+def
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	index	PRIMARY	PRIMARY	66	NULL	5	60.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('abc','this_value_is_>16','def'))
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+pk
+abc
+def
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
+Warnings:
+Note	1003	/* select#1 */ select NULL AS `pk` from `test`.`t1` where multiple equal('this_value_is_>16', NULL)
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16');
+pk
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16', 'and_so_is_this_one');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	range	PRIMARY	PRIMARY	66	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('this_value_is_>16','and_so_is_this_one'))
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16', 'and_so_is_this_one');
+pk
+CREATE TABLE t2 ( a VARCHAR(1), KEY (a) ) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+INSERT INTO t2 VALUES (NULL), ('a'), ('b'), ('æ'), ('ß'), ('s');
+INSERT INTO t2 SELECT 'x' FROM t2;
+INSERT INTO t2 SELECT 'x' FROM t2;
+ANALYZE TABLE t2;
+Table	Op	Msg_type	Msg_text
+test.t2	analyze	status	OK
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ae', 'ss', CONCAT(_utf16 x'00AD', 'b'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	3	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ae','ss',<cache>(concat('­','b'))))
+SELECT * FROM t2 WHERE a IN ('ae', 'ss', CONCAT(_utf16 x'00AD', 'b'));
+a
+æ
+b
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ss',<cache>(concat('­','ae'))))
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae'));
+a
+æ
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae', _utf16 x'00AD'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ss',<cache>(concat('­','ae','­'))))
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae', _utf16 x'00AD'));
+a
+æ
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a = 'ae' OR a = 'ss' OR a = CONCAT(_utf16 x'00AD', 'b');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	3	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where ((`test`.`t2`.`a` = 'ae') or (`test`.`t2`.`a` = 'ss') or (`test`.`t2`.`a` = <cache>(concat('­','b'))))
+SELECT * FROM t2 WHERE a = 'ae' OR a = 'ss' OR a = CONCAT(_utf16 x'00AD', 'b');
+a
+æ
+b
+ß
+CREATE TABLE t3 ( a VARCHAR(768), KEY(a)) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+INSERT INTO t3 VALUES( REPEAT('æ', 767) ), ( REPEAT('æ', 768) );
+ANALYZE TABLE t3;
+Table	Op	Msg_type	Msg_text
+test.t3	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('æ', 767) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t3	NULL	index	a	a	3075	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t3` where (`test`.`t3`.`a` in ('a',<cache>(repeat('æ',767))))
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('æ', 768) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('ae', 767) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t3	NULL	index	a	a	3075	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t3` where (`test`.`t3`.`a` in ('a',<cache>(repeat('ae',767))))
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('ae', 768) );
+1
+1
+CREATE TABLE t4 ( a VARCHAR(100), KEY(a(50))) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+INSERT INTO t4 VALUES( REPEAT('æ', 98) ), ( REPEAT('æ', 99) ), ( REPEAT('æ', 100) );
+ANALYZE TABLE t4;
+Table	Op	Msg_type	Msg_text
+test.t4	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t4 WHERE a IN ( 'a', REPEAT('æ', 98) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t4	NULL	range	a	a	203	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t4` where (`test`.`t4`.`a` in ('a',<cache>(repeat('æ',98))))
+SELECT 1 FROM t4 WHERE a IN ( 'a', REPEAT('æ', 98) );
+1
+1
+CREATE TABLE t5 ( a VARCHAR(16383), KEY(a(768))) CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+INSERT INTO t5 VALUES( REPEAT('æ', 16383) ), ( REPEAT('æ', 16382) ), ( REPEAT('æ', 16381) );
+ANALYZE TABLE t5;
+Table	Op	Msg_type	Msg_text
+test.t5	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16381) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(repeat('æ',16381))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16381) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16382) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(repeat('æ',16382))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16382) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(repeat('æ',16383))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
+1
+1
+DROP TABLE t1, t2, t3, t4, t5;
+CREATE TABLE t1 ( pk VARCHAR(16) NOT NULL PRIMARY KEY ) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
+INSERT INTO t1 VALUES ('abc'), ('def'), ('ghi'), ('jkl'), ('mno');
+ANALYZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	index	PRIMARY	PRIMARY	66	NULL	5	60.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('abc','this_value_is_>16','def'))
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+pk
+abc
+def
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	index	PRIMARY	PRIMARY	66	NULL	5	60.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('abc','this_value_is_>16','def'))
+SELECT * FROM t1 WHERE pk IN ('abc', 'this_value_is_>16', 'def');
+pk
+abc
+def
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
+Warnings:
+Note	1003	/* select#1 */ select NULL AS `pk` from `test`.`t1` where (NULL = 'this_value_is_>16')
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16');
+pk
+EXPLAIN
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16', 'and_so_is_this_one');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	range	PRIMARY	PRIMARY	66	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`pk` AS `pk` from `test`.`t1` where (`test`.`t1`.`pk` in ('this_value_is_>16','and_so_is_this_one'))
+SELECT * FROM t1 WHERE pk IN ('this_value_is_>16', 'and_so_is_this_one');
+pk
+CREATE TABLE t2 ( a VARCHAR(1), KEY (a) ) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
+INSERT INTO t2 VALUES (NULL), ('a'), ('b'), ('æ'), ('ß'), ('s');
+INSERT INTO t2 SELECT 'x' FROM t2;
+INSERT INTO t2 SELECT 'x' FROM t2;
+ANALYZE TABLE t2;
+Table	Op	Msg_type	Msg_text
+test.t2	analyze	status	OK
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ae', 'ss', CONCAT(_utf16 x'00AD', 'b'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	3	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ae','ss',<cache>(convert(concat('­','b') using utf16))))
+SELECT * FROM t2 WHERE a IN ('ae', 'ss', CONCAT(_utf16 x'00AD', 'b'));
+a
+æ
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ss',<cache>(convert(concat('­','ae') using utf16))))
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae'));
+a
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae', _utf16 x'00AD'));
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where (`test`.`t2`.`a` in ('ss',<cache>(convert(concat('­','ae','­') using utf16))))
+SELECT * FROM t2 WHERE a IN ('ss', CONCAT(_utf16 x'00AD', 'ae', _utf16 x'00AD'));
+a
+ß
+EXPLAIN
+SELECT * FROM t2 WHERE a = 'ae' OR a = 'ss' OR a = CONCAT(_utf16 x'00AD', 'b');
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	range	a	a	7	NULL	3	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`a` AS `a` from `test`.`t2` where ((`test`.`t2`.`a` = 'ae') or (`test`.`t2`.`a` = 'ss') or (`test`.`t2`.`a` = <cache>(convert(concat('­','b') using utf16))))
+SELECT * FROM t2 WHERE a = 'ae' OR a = 'ss' OR a = CONCAT(_utf16 x'00AD', 'b');
+a
+æ
+ß
+CREATE TABLE t3 ( a VARCHAR(768), KEY(a)) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
+INSERT INTO t3 VALUES( REPEAT('æ', 767) ), ( REPEAT('æ', 768) );
+ANALYZE TABLE t3;
+Table	Op	Msg_type	Msg_text
+test.t3	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('æ', 767) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t3	NULL	index	a	a	3075	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t3` where (`test`.`t3`.`a` in ('a',<cache>(convert(repeat('æ',767) using utf16))))
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('æ', 768) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('ae', 767) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t3	NULL	index	a	a	3075	NULL	2	100.00	Using where; Using index
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t3` where (`test`.`t3`.`a` in ('a',<cache>(convert(repeat('ae',767) using utf16))))
+SELECT 1 FROM t3 WHERE a IN ( 'a', REPEAT('ae', 768) );
+1
+1
+CREATE TABLE t4 ( a VARCHAR(100), KEY(a(50))) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
+INSERT INTO t4 VALUES( REPEAT('æ', 98) ), ( REPEAT('æ', 99) ), ( REPEAT('æ', 100) );
+ANALYZE TABLE t4;
+Table	Op	Msg_type	Msg_text
+test.t4	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t4 WHERE a IN ( 'a', REPEAT('æ', 98) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t4	NULL	range	a	a	203	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t4` where (`test`.`t4`.`a` in ('a',<cache>(convert(repeat('æ',98) using utf16))))
+SELECT 1 FROM t4 WHERE a IN ( 'a', REPEAT('æ', 98) );
+1
+1
+CREATE TABLE t5 ( a VARCHAR(16383), KEY(a(768))) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
+INSERT INTO t5 VALUES( REPEAT('æ', 16383) ), ( REPEAT('æ', 16382) ), ( REPEAT('æ', 16381) );
+ANALYZE TABLE t5;
+Table	Op	Msg_type	Msg_text
+test.t5	analyze	status	OK
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16381) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(convert(repeat('æ',16381) using utf16))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16381) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16382) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(convert(repeat('æ',16382) using utf16))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16382) );
+1
+1
+EXPLAIN
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t5	NULL	range	a	a	3075	NULL	4	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a` in ('a',<cache>(convert(repeat('æ',16383) using utf16))))
+SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
+1
+1
+DROP TABLE t1, t2, t3, t4, t5;

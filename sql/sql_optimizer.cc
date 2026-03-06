@@ -76,6 +76,7 @@
 #include "sql/item_cmpfunc.h"
 #include "sql/item_func.h"
 #include "sql/item_row.h"
+#include "sql/item_strfunc.h"
 #include "sql/item_subselect.h"
 #include "sql/item_sum.h"  // Item_sum
 #include "sql/iterators/basic_row_iterators.h"
@@ -1400,6 +1401,7 @@ uint QEP_TAB::effective_index() const {
 
     case JT_INDEX_SCAN:
     case JT_FT:
+    case JT_VECTOR:
       return index();
 
     case JT_INDEX_MERGE:
@@ -2314,6 +2316,43 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
         ft_func->score_from_index_scan = true;
         table->file->ft_handler = ft_func->ft_handler;
         return true;
+      }
+    }
+
+    if (order.order && order.order->next == nullptr &&
+        order.order->direction != ORDER_DESC &&
+        is_function_of_type(*order.order->item, Item_func::VEC_DISTANCE_FUNC) &&
+        select_limit != HA_POS_ERROR) {
+      auto dist_func_item = down_cast<Item_func_vec_distance *>((*order.order->item)->real_item());
+      auto left_arg_item = dist_func_item->arguments()[0];
+      auto right_arg_item= dist_func_item->arguments()[1];
+
+      for (uint idx = 0 ; idx < table->s->keys; ++idx) {
+        if (table->key_info[idx].flags & HA_VECTOR) {
+          if (left_arg_item->type() == Item::FIELD_ITEM &&
+              down_cast<const Item_field *>(left_arg_item)->field == table->key_info[idx].key_part[0].field &&
+              right_arg_item->const_for_execution()) {
+            fprintf(stderr, "FOUND VECTOR INDEX 1\n");
+            tab->set_type(JT_VECTOR);
+            tab->ref().key = idx;
+            tab->ref().key_parts = 0;
+            tab->set_index(idx);
+            tab->set_vec(right_arg_item);
+            tab->set_vec_limit(select_limit);
+            return true;
+          } else if (right_arg_item->type() == Item::FIELD_ITEM &&
+                     down_cast<const Item_field *>(right_arg_item)->field == table->key_info[idx].key_part[0].field &&
+                     left_arg_item->const_for_execution()) {
+            fprintf(stderr, "FOUND VECTOR INDEX 2\n");
+            tab->set_type(JT_VECTOR);
+            tab->ref().key = idx;
+            tab->ref().key_parts = 0;
+            tab->set_index(idx);
+            tab->set_vec(left_arg_item);
+            tab->set_vec_limit(select_limit);
+            return true;
+          }
+        }
       }
     }
   }

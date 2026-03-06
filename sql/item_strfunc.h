@@ -1336,6 +1336,7 @@ class Item_func_vec_distance final : public Item_real_func {
       : Item_real_func(pos, a, b, c) {}
   bool resolve_type(THD *thd) override;
   const char *func_name() const override { return "distance"; }
+  enum Functype functype() const override { return VEC_DISTANCE_FUNC; }
   double val_real() override;
 };
 

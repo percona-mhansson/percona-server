@@ -1520,7 +1520,7 @@ bool Explain_join::explain_key_and_len() {
   if (tab->ref().key_parts)
     return explain_key_and_len_index(tab->ref().key, tab->ref().key_length,
                                      tab->ref().key_parts);
-  else if (type == JT_INDEX_SCAN || type == JT_FT)
+  else if (type == JT_INDEX_SCAN || type == JT_FT || type == JT_VECTOR)
     return explain_key_and_len_index(tab->index());
   else if (type == JT_RANGE || type == JT_INDEX_MERGE ||
            ((type == JT_REF || type == JT_REF_OR_NULL) && range_scan_path))

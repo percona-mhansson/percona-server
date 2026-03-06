@@ -222,6 +222,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <unistd.h>
 #endif /* HAVE_UNISTD_H */
 
+#include "extra/hnswlib/hnswlib.h"
+
 #ifndef UNIV_HOTBACKUP
 
 namespace innobase {
@@ -7929,6 +7931,29 @@ void ha_innobase::innobase_initialize_autoinc() {
   dict_table_autoinc_initialize(m_prebuilt->table, auto_inc);
 }
 
+class Vector_index {
+ public:
+  // Make the class non-copyable and non-movable.
+  Vector_index(Vector_index const &rhs) = delete;
+  Vector_index(Vector_index &&rhs) = delete;
+  Vector_index &operator=(Vector_index const &rhs) = delete;
+  Vector_index &operator=(Vector_index &&rhs) = delete;
+
+  Vector_index(hnswlib::HierarchicalNSW<float> *hnsw, hnswlib::L2Space *space)
+      : m_hnsw(hnsw), m_space(space) {}
+
+  ~Vector_index() {
+    delete m_hnsw;
+    delete m_space;
+  }
+
+  hnswlib::HierarchicalNSW<float> *m_hnsw;
+  hnswlib::L2Space *m_space;
+};
+
+std::unordered_map<std::string, Vector_index> vector_indexes;
+std::mutex vector_indexes_lock;
+
 /** Open an InnoDB table.
 @param[in]      name            table name
 @param[in]      open_flags      flags for opening table from SQL-layer.
@@ -8360,7 +8385,7 @@ int ha_innobase::open(const char *name, int, uint open_flags,
     dict_table_autoinc_unlock(ib_table);
   }
 
-  /* Set plugin parser for fulltext index */
+  /* Set plugin parser for fulltext index / handle vector index. */
   for (uint i = 0; i < table->s->keys; i++) {
     if (table->key_info[i].flags & HA_USES_PARSER) {
       dict_index_t *index = innobase_get_index(i);
@@ -8375,6 +8400,19 @@ int ha_innobase::open(const char *name, int, uint open_flags,
 
       DBUG_EXECUTE_IF("fts_instrument_use_default_parser",
                       index->parser = &fts_default_parser;);
+    } else if (table->key_info[i].flags & HA_VECTOR) {
+      // Create HNSW for this vector index if there is not one already.
+      std::lock_guard<std::mutex> guard(vector_indexes_lock);
+      auto vec_idx_it = vector_indexes.find(norm_name);
+      if (vec_idx_it == vector_indexes.end()) {
+        auto space = new hnswlib::L2Space(
+            static_cast<Field_vector *>(table->key_info[i].key_part[0].field)
+                ->get_max_dimensions());
+        vector_indexes.try_emplace(norm_name,
+                                   new hnswlib::HierarchicalNSW<float>(
+                                       space, 10000 /* max rows! */, 25, 200),
+                                   space);
+      }
     }
   }
 
@@ -9910,6 +9948,42 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
 
   DEBUG_SYNC(m_user_thd, "ib_after_row_insert");
 
+  for (uint i = 0; i < table->s->keys; i++) {
+    if (table->key_info[i].flags & HA_VECTOR) {
+      hnswlib::HierarchicalNSW<float> *hnsw = nullptr;
+
+      {
+        std::lock_guard<std::mutex> guard(vector_indexes_lock);
+
+        auto vec_idx_it = vector_indexes.find(m_prebuilt->table->name.m_name);
+        assert(vec_idx_it != vector_indexes.end());
+        hnsw = vec_idx_it->second.m_hnsw;
+      }
+
+      // Table with VECTOR index must always have integer PK.
+      assert(table_share->primary_key != MAX_KEY);
+
+      // Get row aka vector ID.
+      longlong id = table->key_info[table_share->primary_key]
+                        .key_part[0]
+                        .field->val_int();
+
+      auto field_vec =
+          static_cast<Field_vector *>(table->key_info[i].key_part[0].field);
+
+      // We only support insertion of full-width vectors in index.
+      if (field_vec->get_length() != field_vec->max_data_length()) {
+        error_result = HA_ERR_GENERIC;
+        my_error(ER_UNKNOWN_ERROR, MYF(0));
+        goto func_exit;
+      }
+
+      const auto vec = field_vec->get_blob_data();
+
+      hnsw->addPoint(vec, id);
+    }
+  }
+
   /* Handling of errors related to auto-increment. */
   if (auto_inc_used) {
     ulonglong auto_inc;
@@ -10913,6 +10987,8 @@ int ha_innobase::index_end(void) {
   in_range_check_pushed_down = false;
 
   m_ds_mrr.dsmrr_close();
+
+  m_closest.clear();
 
   return 0;
 }
@@ -11943,7 +12019,7 @@ static void innobase_fts_create_doc_id_key(
   dict_field_t *field = index->get_field(0);
   ut_a(field->col->mtype == DATA_INT);
   ut_ad(sizeof(*doc_id) == field->fixed_len);
-  ut_ad(!strcmp(index->name, FTS_DOC_ID_INDEX_NAME));
+//  ut_ad(!strcmp(index->name, FTS_DOC_ID_INDEX_NAME));
 #endif /* UNIV_DEBUG */
 
   /* Convert to storage byte order */
@@ -12107,6 +12183,69 @@ void ha_innobase::ft_end() {
   ib::info(ER_IB_MSG_564) << "ft_end()";
 
   rnd_end();
+}
+
+int ha_innobase::vec_init() {
+  DBUG_TRACE;
+
+  return rnd_init(false);
+}
+
+int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit)
+{
+  hnswlib::HierarchicalNSW<float> *hnsw = nullptr;
+  {
+    std::lock_guard<std::mutex> guard(vector_indexes_lock);
+
+    auto vec_idx_it = vector_indexes.find(m_prebuilt->table->name.m_name);
+    assert(vec_idx_it != vector_indexes.end());
+    hnsw = vec_idx_it->second.m_hnsw;
+  }
+
+  String buff_vec;
+  String *vec = item->val_str(&buff_vec);
+  if (vec == nullptr || vec->ptr() == nullptr) {
+    return (HA_ERR_END_OF_FILE);
+  }
+
+  uint32 vec_dims = get_dimensions(vec->length(), Field_vector::precision);
+  if (vec_dims == UINT32_MAX) {
+    return (HA_ERR_END_OF_FILE);
+  }
+
+  // FIXME: we need to take filtering into account.
+  m_closest = hnsw->searchKnnCloserFirst(vec->ptr(), limit);
+  m_closest_idx = 0;
+
+  return vec_read_next(buf);
+}
+
+int ha_innobase::vec_read_next(uchar *buf)
+{
+  if (m_closest_idx >= m_closest.size())
+    return (HA_ERR_END_OF_FILE);
+
+  doc_id_t id = m_closest[m_closest_idx].second;
+  ++m_closest_idx;
+
+  dict_index_t *index = m_prebuilt->index;
+  dtuple_t *tuple = m_prebuilt->search_tuple;
+
+  innobase_fts_create_doc_id_key(tuple, index, &id);
+
+  auto ret = innobase_srv_conc_enter_innodb(m_prebuilt);
+
+  if (ret == DB_SUCCESS) {
+    ret = row_search_for_mysql((byte *)buf, PAGE_CUR_GE, m_prebuilt,
+                               ROW_SEL_EXACT, 0);
+    innobase_srv_conc_exit_innodb(m_prebuilt);
+  }
+
+  if (ret == DB_SUCCESS) {
+    return 0;
+  }
+
+  return (HA_ERR_END_OF_FILE);
 }
 
 /**
@@ -15235,6 +15374,11 @@ int innobase_basic_ddl::delete_impl(THD *thd, const char *name,
 
   if (handler != nullptr && error == DB_SUCCESS) {
     priv->unregister_table_handler(norm_name);
+  }
+
+  if (error == DB_SUCCESS) {
+    std::lock_guard<std::mutex> guard(vector_indexes_lock);
+    vector_indexes.erase(norm_name);
   }
 
   if (error == DB_SUCCESS && file_per_table) {

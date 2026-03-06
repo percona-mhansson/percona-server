@@ -41,6 +41,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "row0pread-histogram.h"
 #include "trx0trx.h"
 
+#include "extra/hnswlib/hnswlib.h"
+
 /** "GEN_CLUST_INDEX" is the name reserved for InnoDB default
 system clustered index when there is no primary key. */
 extern const char innobase_index_reserve_name[];
@@ -192,6 +194,10 @@ class ha_innobase : public handler {
                                   Ft_hints *hints) override;
 
   int ft_read(uchar *buf) override;
+
+  int vec_init() override;
+  int vec_read_first(Item *item, uchar *buf, ha_rows limit) override;
+  int vec_read_next(uchar *buf) override;
 
   void position(const uchar *record) override;
 
@@ -779,6 +785,9 @@ class ha_innobase : public handler {
 
   /** If mysql has locked with external_lock() */
   bool m_mysql_has_locked;
+
+  std::vector<std::pair<float, hnswlib::labeltype>> m_closest;
+  size_t m_closest_idx{0};
 
   /** Get the table stats.
   @param[in]  flag       flag indicating which statistics to return

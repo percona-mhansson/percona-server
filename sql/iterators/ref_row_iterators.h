@@ -168,6 +168,25 @@ class FullTextSearchIterator final : public TableRowIterator {
   ha_rows *const m_examined_rows;
 };
 
+class VectorSearchIterator final : public TableRowIterator {
+ public:
+  // "examined_rows", if not nullptr, is incremented for each successful Read().
+  VectorSearchIterator(THD *thd, TABLE *table, Index_lookup *ref,
+                       Item *item, ha_rows limit, ha_rows *examined_rows);
+  ~VectorSearchIterator() override;
+
+ private:
+  bool DoInit() override;
+  int DoRead() override;
+
+  Index_lookup *const m_ref;
+  ha_rows *const m_examined_rows;
+
+  bool m_first;
+  Item *m_item;
+  ha_rows m_limit;
+};
+
 /*
   This is for QS_DYNAMIC_RANGE, i.e., "Range checked for each
   record". The trace for the range analysis below this point will

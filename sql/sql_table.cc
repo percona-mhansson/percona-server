@@ -5207,6 +5207,11 @@ static bool prepare_key_column(THD *thd, HA_CREATE_INFO *create_info,
     */
     column_length = is_blob(sql_field->sql_type);
   } else if (key->type == KEYTYPE_VECTOR) {
+    // VECTOR indexes are only allowed on VECTOR columns.
+    if (sql_field->sql_type != MYSQL_TYPE_VECTOR) {
+      my_error(ER_UNKNOWN_ERROR, MYF(0));
+      return true;
+    }
     column_length = 1; // Dummy value.
   } else {
     switch (sql_field->sql_type) {
@@ -8668,6 +8673,7 @@ bool mysql_prepare_create_table(
 
   uint key_number = 0;
   bool primary_key = false;
+  uint vector_key_number = 0;
 
   // First prepare non-foreign keys so that they are ready when
   // we prepare foreign keys.
@@ -8682,6 +8688,14 @@ bool mysql_prepare_create_table(
         return true;
       }
       primary_key = true;
+    }
+    // Disallow more than one VECTOR index on the table.
+    if (key->type == KEYTYPE_VECTOR) {
+      if (vector_key_number) {
+        my_error(ER_UNKNOWN_ERROR, MYF(0));
+        return true;
+      }
+      ++vector_key_number;
     }
 
     if (key->type != KEYTYPE_FOREIGN) {
@@ -8716,6 +8730,12 @@ bool mysql_prepare_create_table(
     return true;
   }
 
+  // We allow VECTOR keys only with tables with PK
+  if (!primary_key && vector_key_number) {
+    my_error(ER_UNKNOWN_ERROR, MYF(0));
+    return true;
+  }
+
   /*
     At this point all KEY objects are for indexes are fully constructed.
     So we can check for duplicate indexes for keys for which it was requested.
@@ -8742,6 +8762,30 @@ bool mysql_prepare_create_table(
 
   /* Sort keys in optimized order */
   std::sort(*key_info_buffer, *key_info_buffer + *key_count, sort_keys());
+
+  // We allow VECTOR indices only on tables with BIGINT UNSIGNED PKs.
+  // (innobase_fts_create_doc_id_key() which is used on InnoDB layer
+  // assumes this).
+  if (vector_key_number) {
+    assert(primary_key);
+    const KEY &primary_info = *key_info_buffer[0];
+
+    if (primary_info.actual_key_parts > 1) {
+      my_error(ER_UNKNOWN_ERROR, MYF(0));
+      return true;
+    }
+
+    for (it.rewind(), field_no = 0; (sql_field = it++); field_no++) {
+      if (field_no >= primary_info.key_part[0].fieldnr)
+        break;
+    }
+    assert(sql_field);
+    if (sql_field->sql_type != MYSQL_TYPE_LONGLONG ||
+        !sql_field->is_unsigned) {
+      my_error(ER_UNKNOWN_ERROR, MYF(0));
+      return true;
+    }
+  }
 
   /*
     Normal keys are done, now prepare foreign keys.

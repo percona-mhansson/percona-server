@@ -2935,7 +2935,8 @@ bool create_key_part_field_with_prefix_length(TABLE *table, MEM_ROOT *root) {
         creation for Geometric columns.
       */
       if (field->key_length() != key_part->length &&
-          field->type() != MYSQL_TYPE_GEOMETRY) {
+          (field->type() != MYSQL_TYPE_GEOMETRY &&
+           field->type() != MYSQL_TYPE_VECTOR)) {
         /*
           We are using only a prefix of the column as a key:
           Create a new field for the key part that matches the index
@@ -3476,7 +3477,8 @@ int closefrm(TABLE *table, bool free_share) {
       for (KEY_PART_INFO *key_part_end = key_part + key_info->actual_key_parts;
            key_part < key_part_end; key_part++) {
         if (key_part->field && key_part->field->is_flag_set(BLOB_FLAG) &&
-            key_part->field->type() != MYSQL_TYPE_GEOMETRY) {
+            (key_part->field->type() != MYSQL_TYPE_GEOMETRY &&
+             key_part->field->type() != MYSQL_TYPE_VECTOR)) {
           ::destroy_at(key_part->field);
           key_part->field = nullptr;
         }

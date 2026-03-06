@@ -6077,6 +6077,10 @@ class handler {
   int ha_ft_read(uchar *buf);
   int ha_read_first_row(uchar *buf, uint primary_key);
 
+  virtual int vec_init() { return HA_ERR_WRONG_COMMAND; }
+  virtual int vec_read_first(Item *, uchar *, ha_rows) { return HA_ERR_WRONG_COMMAND; }
+  virtual int vec_read_next(uchar *) { return HA_ERR_WRONG_COMMAND; }
+
  protected:
   /// @see index_read_map().
   virtual int rnd_next(uchar *buf) = 0;

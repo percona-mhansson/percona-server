@@ -7,3 +7,7 @@
 [submodule "extra/libkmip"]
 	path = extra/libkmip
 	url = https://github.com/Percona-Lab/libkmip.git
+[submodule "extra/hnswlib"]
+	path = extra/hnswlib
+	url = https://github.com/percona-mhansson/hnswlib.git
+	branch = percona

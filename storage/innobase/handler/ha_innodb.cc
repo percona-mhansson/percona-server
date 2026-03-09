@@ -222,7 +222,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <unistd.h>
 #endif /* HAVE_UNISTD_H */
 
-#include "extra/hnswlib/hnswlib.h"
+#include "extra/hnswlib/hnswlib/hnswlib.h"
 
 #ifndef UNIV_HOTBACKUP
 

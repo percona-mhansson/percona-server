@@ -41,7 +41,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "row0pread-histogram.h"
 #include "trx0trx.h"
 
-#include "extra/hnswlib/hnswlib.h"
+#include "extra/hnswlib/hnswlib/hnswlib.h"
 
 /** "GEN_CLUST_INDEX" is the name reserved for InnoDB default
 system clustered index when there is no primary key. */

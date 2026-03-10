@@ -1586,7 +1586,9 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
         &tree, value, type, field, &impossible_cond_cause, alloc,
         param->query_block, inexact);
 
-    if (always_true_or_false && *inexact && is_string_type(field->type())) {
+    if (always_true_or_false && *inexact && is_string_type(field->type()) &&
+        (!is_prefix_index(field->table, key_part->key) ||
+         type == Item_func::EQ_FUNC)) {
       // A search key couldn't be created because
       // save_value_and_handle_conversion() is using a Field object to
       // instantiate the search key. This particular Field object has a buffer
@@ -1617,12 +1619,9 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
         key_buf[0] = char{field->is_real_null()};
       }
       if (is_prefix_index(field->table, key_part->key)) {
-        if (type == Item_func::LT_FUNC || type == Item_func::GT_FUNC) {
-          int2store(key_buf + key_image_null_offset, nchars);
-        } else {
-          // I have no idea why the /2 works.
-          int2store(key_buf + key_image_null_offset, field->field_length / 2);
-        }
+        // I have no idea why the /2 works.
+        int2store(key_buf + key_image_null_offset, field->field_length / 2);
+
       } else {
         int2store(key_buf + key_image_null_offset, copy_length);
       }

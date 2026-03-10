@@ -161,7 +161,34 @@ Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a`
 SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
 1
 1
-DROP TABLE t1, t2, t3, t4, t5;
+CREATE TABLE t6 (
+a VARCHAR(6),
+KEY(a(3))
+);
+INSERT INTO t6 VALUES ('aaaaaa'), ('bbbbbb'), ('cccccc'), ('dddddd'), ('eeeeee'), ('ffffff');
+ANALYZE TABLE t6;
+Table	Op	Msg_type	Msg_text
+test.t6	analyze	status	OK
+SELECT * FROM t6 WHERE a < 'dddddd';
+a
+aaaaaa
+bbbbbb
+cccccc
+SELECT * FROM t6 WHERE a <= 'dddddd';
+a
+aaaaaa
+bbbbbb
+cccccc
+dddddd
+SELECT * FROM t6 WHERE a > 'dddddd';
+a
+eeeeee
+ffffff
+SELECT * FROM t6 WHERE a >= 'dddddd';
+a
+eeeeee
+ffffff
+DROP TABLE t1, t2, t3, t4, t5, t6;
 CREATE TABLE t1 ( pk VARCHAR(16) NOT NULL PRIMARY KEY ) CHARSET=utf16 COLLATE=utf16_unicode_520_ci;
 INSERT INTO t1 VALUES ('abc'), ('def'), ('ghi'), ('jkl'), ('mno');
 ANALYZE TABLE t1;
@@ -317,4 +344,32 @@ Note	1003	/* select#1 */ select 1 AS `1` from `test`.`t5` where (`test`.`t5`.`a`
 SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
 1
 1
-DROP TABLE t1, t2, t3, t4, t5;
+CREATE TABLE t6 (
+a VARCHAR(6),
+KEY(a(3))
+);
+INSERT INTO t6 VALUES ('aaaaaa'), ('bbbbbb'), ('cccccc'), ('dddddd'), ('eeeeee'), ('ffffff');
+ANALYZE TABLE t6;
+Table	Op	Msg_type	Msg_text
+test.t6	analyze	status	OK
+SELECT * FROM t6 WHERE a < 'dddddd';
+a
+aaaaaa
+bbbbbb
+cccccc
+SELECT * FROM t6 WHERE a <= 'dddddd';
+a
+aaaaaa
+bbbbbb
+cccccc
+dddddd
+SELECT * FROM t6 WHERE a > 'dddddd';
+a
+eeeeee
+ffffff
+SELECT * FROM t6 WHERE a >= 'dddddd';
+a
+dddddd
+eeeeee
+ffffff
+DROP TABLE t1, t2, t3, t4, t5, t6;

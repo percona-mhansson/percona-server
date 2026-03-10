@@ -1619,9 +1619,14 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
         key_buf[0] = char{field->is_real_null()};
       }
       if (is_prefix_index(field->table, key_part->key)) {
-        // I have no idea why the /2 works.
-        int2store(key_buf + key_image_null_offset, field->field_length / 2);
-
+        if (type == Item_func::LT_FUNC || type == Item_func::GT_FUNC) {
+          int2store(key_buf + key_image_null_offset, nchars);
+        } else if (type == Item_func::GE_FUNC) {
+          int2store(key_buf + key_image_null_offset, field->field_length);
+        } else {
+          // I have no idea why the /2 works.
+          int2store(key_buf + key_image_null_offset, field->field_length / 2);
+        }
       } else {
         int2store(key_buf + key_image_null_offset, copy_length);
       }
@@ -1666,10 +1671,10 @@ static SEL_ROOT *get_mm_leaf(THD *thd, RANGE_OPT_PARAM *param, Item *cond_func,
     (a) (unsigned_int [< | <=] negative_constant) == false
     (b) (unsigned_int [> | >=] negative_constant) == true
     In case (a) the condition is false for all values, and in case (b) it
-    is true for all values, so we can avoid unnecessary retrieval and condition
-    testing, and we also get correct comparison of unsigned integers with
-    negative integers (which otherwise fails because at query execution time
-    negative integers are cast to unsigned if compared with unsigned).
+    is true for all values, so we can avoid unnecessary retrieval and
+    condition testing, and we also get correct comparison of unsigned integers
+    with negative integers (which otherwise fails because at query execution
+    time negative integers are cast to unsigned if compared with unsigned).
   */
   if (field->result_type() == INT_RESULT &&
       value->result_type() == INT_RESULT &&

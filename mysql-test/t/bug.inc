@@ -90,4 +90,34 @@ SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
 SELECT 1 FROM t5 WHERE a IN ( 'a', REPEAT('æ', 16383) );
 
 
-DROP TABLE t1, t2, t3, t4, t5;
+CREATE TABLE t6 (
+    a VARCHAR(6),
+    KEY(a(3))
+);
+
+INSERT INTO t6 VALUES ('aaaaaa'), ('bbbbbb'), ('cccccc'), ('dddddd'), ('eeeeee'), ('ffffff');
+
+ANALYZE TABLE t6;
+
+SELECT * FROM t6 WHERE a < 'dddddd';
+SELECT * FROM t6 WHERE a <= 'dddddd';
+SELECT * FROM t6 WHERE a > 'dddddd';
+SELECT * FROM t6 WHERE a >= 'dddddd';
+
+
+CREATE TABLE t7 (
+    a VARCHAR(6),
+    KEY(a(3))
+);
+
+INSERT INTO t7 VALUES ('aaaaa'), ('bbbbb'), ('ccccc'), ('ddddd'), ('eeeee'), ('fffff');
+
+ANALYZE TABLE t7;
+
+SELECT * FROM t7 WHERE a < 'ddddd';
+SELECT * FROM t7 WHERE a <= 'ddddd';
+SELECT * FROM t7 WHERE a > 'ddddd';
+SELECT * FROM t7 WHERE a >= 'ddddd';
+
+
+DROP TABLE t1, t2, t3, t4, t5, t6, t7;

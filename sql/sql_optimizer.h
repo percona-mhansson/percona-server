@@ -876,6 +876,8 @@ class JOIN {
   */
   bool optimize_fts_query();
 
+  bool optimize_vector_query();
+
   /**
     Checks if the chosen plan suffers from a problem related to full-text search
     and streaming aggregation, which is likely to cause wrong results or make

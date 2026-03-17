@@ -836,6 +836,8 @@ bool JOIN::optimize(bool finalize_access_paths) {
   /* Perform FULLTEXT search before all regular searches */
   if (query_block->has_ft_funcs() && optimize_fts_query()) return true;
 
+  if (query_block->has_vector_funcs() && optimize_vector_query()) return true;
+
   /*
     By setting child_subquery_can_materialize so late we gain the following:
     JOIN::compare_costs_of_subquery_strategies() can test this variable to
@@ -2319,44 +2321,12 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
       }
     }
 
-    if (order.order && order.order->next == nullptr &&
+    if (order.order != nullptr && order.order->next == nullptr &&
         order.order->direction != ORDER_DESC &&
         is_function_of_type(*order.order->item, Item_func::VEC_DISTANCE_FUNC) &&
+        tab->table()->key_info[tab->ref().key].algorithm == HA_KEY_ALG_VECTOR &&
         select_limit != HA_POS_ERROR) {
-      auto dist_func_item = down_cast<Item_func_vec_distance *>(
-          (*order.order->item)->real_item());
-      auto left_arg_item = dist_func_item->arguments()[0];
-      auto right_arg_item = dist_func_item->arguments()[1];
-
-      for (uint idx = 0; idx < table->s->keys; ++idx) {
-        if (table->key_info[idx].flags & HA_VECTOR) {
-          if (left_arg_item->type() == Item::FIELD_ITEM &&
-              down_cast<const Item_field *>(left_arg_item)->field ==
-                  table->key_info[idx].key_part[0].field &&
-              right_arg_item->const_for_execution()) {
-            fprintf(stderr, "FOUND VECTOR INDEX 1\n");
-            tab->set_type(JT_VECTOR);
-            tab->ref().key = idx;
-            tab->ref().key_parts = 0;
-            tab->set_index(idx);
-            tab->set_vec(right_arg_item);
-            tab->set_vec_limit(select_limit);
-            return true;
-          } else if (right_arg_item->type() == Item::FIELD_ITEM &&
-                     down_cast<const Item_field *>(right_arg_item)->field ==
-                         table->key_info[idx].key_part[0].field &&
-                     left_arg_item->const_for_execution()) {
-            fprintf(stderr, "FOUND VECTOR INDEX 2\n");
-            tab->set_type(JT_VECTOR);
-            tab->ref().key = idx;
-            tab->ref().key_parts = 0;
-            tab->set_index(idx);
-            tab->set_vec(left_arg_item);
-            tab->set_vec_limit(select_limit);
-            return true;
-          }
-        }
-      }
+      return true;
     }
   }
 
@@ -11043,6 +11013,63 @@ bool JOIN::optimize_fts_query() {
   }
 
   return init_ftfuncs(thd, query_block);
+}
+
+bool JOIN::optimize_vector_query() {
+  ASSERT_BEST_REF_IN_JOIN_ORDER(this);
+
+  assert(query_block->has_vector_funcs());
+
+  // Only used by the old optimizer.
+  assert(!thd->lex->using_hypergraph_optimizer());
+
+  assert(order.order != nullptr);
+
+  for (const auto &dist_fn_expr : *query_block->vector_func_list) {
+    for (const auto *o = order.order; o != nullptr; o = o->next) {
+      if ((*o->item)->eq(&dist_fn_expr)) {
+        if (o->direction != ORDER_ASC) continue;
+      }
+    }
+
+    const auto arg1 = dist_fn_expr.arguments()[0]->real_item();
+    const auto arg2 = dist_fn_expr.arguments()[1]->real_item();
+
+    Item *const_vector_expr;
+    const Field *vector_column;
+    if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
+      vector_column = down_cast<const Item_field *>(arg1)->field;
+      const_vector_expr = arg2;
+    } else if (arg2->type() == Item::FIELD_ITEM &&
+               arg1->const_for_execution()) {
+      vector_column = down_cast<const Item_field *>(arg2)->field;
+      const_vector_expr = arg1;
+    } else {
+      return false;
+    }
+
+    assert(vector_column->type() == MYSQL_TYPE_VECTOR);
+
+    for (uint i = const_tables; i < tables; i++) {
+      JOIN_TAB *tab = best_ref[i];
+      if (const auto table = tab->table(); table != nullptr) {
+        for (uint idx{0}; idx < table->s->keys; ++idx) {
+          const auto &index = table->key_info[idx];
+          if (index.flags & HA_VECTOR &&
+              table->keys_in_use_for_query.is_set(idx) &&
+              index.key_part[0].field == vector_column) {
+            tab->set_type(JT_VECTOR);
+            tab->ref().key = idx;
+            tab->ref().key_parts = 0;
+            tab->set_index(idx);
+            tab->set_vec(const_vector_expr);
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /**

@@ -12375,7 +12375,9 @@ int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit) {
     return (HA_ERR_END_OF_FILE);
   }
 
-  m_closest = hnsw->searchKnnCloserFirst(vec->ptr(), limit);
+  // FIXME: we need to take filtering into account.
+  m_closest = hnsw->searchKnnCloserFirst(
+      vec->ptr(), limit > 0 ? limit : std::numeric_limits<ha_rows>::max());
   m_closest_idx = 0;
 
   // Save search parameters to be able to resume search.

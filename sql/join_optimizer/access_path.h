@@ -1488,10 +1488,9 @@ inline AccessPath *NewFullTextSearchAccessPath(THD *thd, TABLE *table,
 }
 
 inline AccessPath *NewVectorSearchAccessPath(THD *thd, TABLE *table,
-                                               Index_lookup *ref,
-                                               Item *item,
-                                               ha_rows limit,
-                                               bool count_examined_rows) {
+                                             Index_lookup *ref, Item *item,
+                                             ha_rows limit,
+                                             bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
   path->type = AccessPath::VECTOR_SEARCH;
   path->count_examined_rows = count_examined_rows;

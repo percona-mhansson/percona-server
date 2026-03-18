@@ -221,9 +221,8 @@ static dict_index_t *dict_index_build_internal_fts(
     dict_table_t *table,  /*!< in: table */
     dict_index_t *index); /*!< in: user representation of an FTS index */
 
-static dict_index_t *dict_index_build_internal_vec(
-    dict_table_t *table,
-    dict_index_t *index);
+static dict_index_t *dict_index_build_internal_vec(dict_table_t *table,
+                                                   dict_index_t *index);
 
 /** Removes an index from the dictionary cache. */
 static void dict_index_remove_from_cache_low(
@@ -2321,7 +2320,7 @@ static bool dict_index_too_big_for_tree(const dict_table_t *table,
                                         const dict_index_t *new_index) {
   /* FTS index consists of auxiliary tables, they shall be excluded from index
   row size check */
-  if (new_index->type & (DICT_FTS|DICT_VECTOR)) {
+  if (new_index->type & (DICT_FTS | DICT_VECTOR)) {
     return (false);
   }
 
@@ -3506,7 +3505,7 @@ NOT NULL */
   index = table->first_index();
 
   while (index != nullptr) {
-    if (types_idx != index && !(index->type & (DICT_FTS|DICT_VECTOR)) &&
+    if (types_idx != index && !(index->type & (DICT_FTS | DICT_VECTOR)) &&
         !dict_index_is_spatial(index) && !index->to_be_dropped &&
         (!(index->uncommitted &&
            ((index->online_status == ONLINE_INDEX_ABORTED_DROPPED) ||

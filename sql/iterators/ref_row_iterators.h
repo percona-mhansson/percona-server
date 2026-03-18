@@ -171,8 +171,8 @@ class FullTextSearchIterator final : public TableRowIterator {
 class VectorSearchIterator final : public TableRowIterator {
  public:
   // "examined_rows", if not nullptr, is incremented for each successful Read().
-  VectorSearchIterator(THD *thd, TABLE *table, Index_lookup *ref,
-                       Item *item, ha_rows limit, ha_rows *examined_rows);
+  VectorSearchIterator(THD *thd, TABLE *table, Index_lookup *ref, Item *item,
+                       ha_rows limit, ha_rows *examined_rows);
   ~VectorSearchIterator() override;
 
  private:

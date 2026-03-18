@@ -5212,7 +5212,7 @@ static bool prepare_key_column(THD *thd, HA_CREATE_INFO *create_info,
       my_error(ER_UNKNOWN_ERROR, MYF(0));
       return true;
     }
-    column_length = 1; // Dummy value.
+    column_length = 1;  // Dummy value.
   } else {
     switch (sql_field->sql_type) {
       case MYSQL_TYPE_GEOMETRY:
@@ -8776,12 +8776,10 @@ bool mysql_prepare_create_table(
     }
 
     for (it.rewind(), field_no = 0; (sql_field = it++); field_no++) {
-      if (field_no >= primary_info.key_part[0].fieldnr)
-        break;
+      if (field_no >= primary_info.key_part[0].fieldnr) break;
     }
     assert(sql_field);
-    if (sql_field->sql_type != MYSQL_TYPE_LONGLONG ||
-        !sql_field->is_unsigned) {
+    if (sql_field->sql_type != MYSQL_TYPE_LONGLONG || !sql_field->is_unsigned) {
       my_error(ER_UNKNOWN_ERROR, MYF(0));
       return true;
     }

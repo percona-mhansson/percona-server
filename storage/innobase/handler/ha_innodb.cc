@@ -5812,8 +5812,9 @@ static int innodb_init(void *p) {
       HTON_SUPPORTS_ATOMIC_DDL | HTON_CAN_RECREATE |
       HTON_SUPPORTS_SECONDARY_ENGINE | HTON_SUPPORTS_TABLE_ENCRYPTION |
       HTON_SUPPORTS_GENERATED_INVISIBLE_PK | HTON_SUPPORTS_BULK_LOAD |
-  // TODO(WL9440): to be enabled when distance scan is implemented in innodb.
-  //| HTON_SUPPORTS_DISTANCE_SCAN;
+      // TODO(WL9440): to be enabled when distance scan is implemented in
+      // innodb.
+      //| HTON_SUPPORTS_DISTANCE_SCAN;
       HTON_SUPPORTS_ONLINE_BACKUPS | HTON_SUPPORTS_COMPRESSED_COLUMNS;
 
   innobase_hton->replace_native_transaction_in_thd = innodb_replace_trx_in_thd;
@@ -8416,8 +8417,8 @@ int ha_innobase::open(const char *name, int, uint open_flags,
         auto space = new hnswlib::L2Space(
             static_cast<Field_vector *>(table->key_info[i].key_part[0].field)
                 ->get_max_dimensions());
-        auto hnsw = new hnswlib::HierarchicalNSW<float>(space,
-            10000 /* max rows! */, 25, 200);
+        auto hnsw = new hnswlib::HierarchicalNSW<float>(
+            space, 10000 /* max rows! */, 25, 200);
 
         trx_t *vec_load_trx = trx_allocate_for_background();
         vec_load_trx->op_info = "loading vector aux table rows";
@@ -8425,8 +8426,8 @@ int ha_innobase::open(const char *name, int, uint open_flags,
         const dberr_t vec_load_err = vec_aux_table_load_all_parsed(
             vec_load_trx, m_prebuilt->table, &vec_aux_rows);
         if (vec_load_err != DB_SUCCESS) {
-          ib::warn(ER_IB_MSG_466)
-              << "vec_aux_table_load_all_parsed failed: " << ut_strerr(vec_load_err);
+          ib::warn(ER_IB_MSG_466) << "vec_aux_table_load_all_parsed failed: "
+                                  << ut_strerr(vec_load_err);
           fts_sql_rollback(vec_load_trx);
         } else {
           fts_sql_commit(vec_load_trx);
@@ -8435,13 +8436,15 @@ int ha_innobase::open(const char *name, int, uint open_flags,
 
         if (vec_load_err == DB_SUCCESS) {
           for (const vec_aux_loaded_row_t &r : vec_aux_rows) {
-            fprintf(stderr,
-                    "[ha_innobase vector load from aux] id (label)=%zu layer=%zu\n",
-                    static_cast<size_t>(std::get<0>(r)),
-                    static_cast<size_t>(std::get<1>(r)));
+            fprintf(
+                stderr,
+                "[ha_innobase vector load from aux] id (label)=%zu layer=%zu\n",
+                static_cast<size_t>(std::get<0>(r)),
+                static_cast<size_t>(std::get<1>(r)));
 
             fprintf(stderr,
-                    "[ha_innobase vector load from aux] data_point as float[%zu]:\n",
+                    "[ha_innobase vector load from aux] data_point as "
+                    "float[%zu]:\n",
                     std::get<2>(r).size());
             for (size_t d = 0; d < std::get<2>(r).size(); ++d) {
               fprintf(stderr, "  [%zu]=%g\n", d,
@@ -8468,22 +8471,26 @@ int ha_innobase::open(const char *name, int, uint open_flags,
           }
         }
 
-        auto cb = [](size_t label, unsigned int internal_id, const void *data_point,
-                     const hnswlib::HierarchicalNSW<float>::NeighborLabelListsByLevel
-                         &neighbors_by_level,
+        auto cb = [](size_t label, unsigned int internal_id,
+                     const void *data_point,
+                     const hnswlib::HierarchicalNSW<
+                         float>::NeighborLabelListsByLevel &neighbors_by_level,
                      void *callback_context) {
-          fprintf(stderr, "[ha_innobase vector insert callback] id (label)=%zu\n",
+          fprintf(stderr,
+                  "[ha_innobase vector insert callback] id (label)=%zu\n",
                   label);
           (void)internal_id;
           const innodb_vector_addpoint_context_t *ctx =
-              static_cast<const innodb_vector_addpoint_context_t *>(callback_context);
+              static_cast<const innodb_vector_addpoint_context_t *>(
+                  callback_context);
           ut_ad(ctx != nullptr);
           ut_ad(ctx->ib_table != nullptr);
           ut_ad(ctx->trx != nullptr);
 
-          fprintf(stderr,
-                  "[ha_innobase vector insert callback] data_point as float[%u]:\n",
-                  ctx->vector_dimensions);
+          fprintf(
+              stderr,
+              "[ha_innobase vector insert callback] data_point as float[%u]:\n",
+              ctx->vector_dimensions);
           {
             const float *const fv = static_cast<const float *>(data_point);
             for (uint32_t d = 0; d < ctx->vector_dimensions; ++d) {
@@ -8506,9 +8513,9 @@ int ha_innobase::open(const char *name, int, uint open_flags,
           const ulint vec_len =
               static_cast<ulint>(ctx->vector_dimensions) * sizeof(float);
           const std::uint64_t node_layer =
-              neighbors_by_level.empty() ? 0
-                                         : static_cast<std::uint64_t>(
-                                               neighbors_by_level.size() - 1);
+              neighbors_by_level.empty()
+                  ? 0
+                  : static_cast<std::uint64_t>(neighbors_by_level.size() - 1);
           const dberr_t err = vec_aux_table_insert_row_parsed(
               ctx->trx, ctx->ib_table, static_cast<std::uint64_t>(label),
               node_layer, static_cast<const byte *>(data_point), vec_len,
@@ -10131,8 +10138,8 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
 
       const auto vec = field_vec->get_blob_data();
 
-      innodb_vector_addpoint_context_t addpoint_ctx{m_prebuilt->table, trx,
-                                                    field_vec->get_max_dimensions()};
+      innodb_vector_addpoint_context_t addpoint_ctx{
+          m_prebuilt->table, trx, field_vec->get_max_dimensions()};
       hnsw->addPoint(vec, static_cast<hnswlib::labeltype>(id), false,
                      static_cast<void *>(&addpoint_ctx));
     }
@@ -12347,8 +12354,7 @@ int ha_innobase::vec_init() {
   return rnd_init(false);
 }
 
-int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit)
-{
+int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit) {
   hnswlib::HierarchicalNSW<float> *hnsw = nullptr;
   {
     std::lock_guard<std::mutex> guard(vector_indexes_lock);
@@ -12382,22 +12388,22 @@ int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit)
 }
 
 class HNSW_returned_filter : public hnswlib::BaseFilterFunctor {
-  public:
-    HNSW_returned_filter(std::unordered_set<hnswlib::labeltype> &returned) : m_returned(returned) {}
+ public:
+  HNSW_returned_filter(std::unordered_set<hnswlib::labeltype> &returned)
+      : m_returned(returned) {}
 
-    bool operator()(hnswlib::labeltype id) override { return m_returned.find(id) == m_returned.end(); }
+  bool operator()(hnswlib::labeltype id) override {
+    return m_returned.find(id) == m_returned.end();
+  }
 
-  private:
-    std::unordered_set<hnswlib::labeltype> &m_returned;
+ private:
+  std::unordered_set<hnswlib::labeltype> &m_returned;
 };
 
-int ha_innobase::vec_read_next(uchar *buf)
-{
-  if (m_closest_idx >= m_closest.size())
-  {
+int ha_innobase::vec_read_next(uchar *buf) {
+  if (m_closest_idx >= m_closest.size()) {
     // Handle the case when no neighbours are left!
-    if (m_closest.size() < m_saved_limit)
-      return (HA_ERR_END_OF_FILE);
+    if (m_closest.size() < m_saved_limit) return (HA_ERR_END_OF_FILE);
 
     // There might be more neighbours. Let us find them!
     //
@@ -12410,11 +12416,11 @@ int ha_innobase::vec_read_next(uchar *buf)
 
     HNSW_returned_filter returned_filter(m_closest_returned);
 
-    m_closest = m_saved_hnsw->searchKnnCloserFirst(m_saved_vec.ptr(), m_saved_limit, &returned_filter);
+    m_closest = m_saved_hnsw->searchKnnCloserFirst(
+        m_saved_vec.ptr(), m_saved_limit, &returned_filter);
     m_closest_idx = 0;
 
-    if (m_closest.size() == 0)
-      return (HA_ERR_END_OF_FILE);
+    if (m_closest.size() == 0) return (HA_ERR_END_OF_FILE);
   }
 
   doc_id_t id = m_closest[m_closest_idx].second;
@@ -18719,7 +18725,8 @@ void ha_innobase::info_low_key(uint flag, const dict_table_t *ib_table) {
     /* We do not maintain stats for fulltext or spatial indexes. Thus, we can't
     calculate pct_cached below because we need dict_index_t::stat_n_leaf_pages
     for that. See dict_stats_should_ignore_index(). */
-    if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) || (key->flags & HA_VECTOR)) {
+    if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) ||
+        (key->flags & HA_VECTOR)) {
       pct_cached = IN_MEMORY_ESTIMATE_UNKNOWN;
     } else {
       pct_cached = index_pct_cached(index);
@@ -18737,7 +18744,8 @@ void ha_innobase::info_low_key(uint flag, const dict_table_t *ib_table) {
       }
 
       for (ulong j = 0; j < key->actual_key_parts; j++) {
-        if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) || (key->flags & HA_VECTOR)) {
+        if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) ||
+            (key->flags & HA_VECTOR)) {
           /* The record per key does not apply to FTS or Spatial indexes. */
           key->set_records_per_key(j, 1.0f);
           continue;

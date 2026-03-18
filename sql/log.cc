@@ -1461,9 +1461,8 @@ void Query_logger::cleanup() {
 }
 
 bool Query_logger::slow_log_write(THD *thd, const char *query,
-                                  size_t query_length,
-                                  bool aggregate, ulonglong lock_usec,
-                                  ulonglong exec_usec) {
+                                  size_t query_length, bool aggregate,
+                                  ulonglong lock_usec, ulonglong exec_usec) {
   assert(thd->enable_slow_log);
 
   if (!(*slow_log_handler_list)) return false;
@@ -1804,7 +1803,8 @@ static void copy_global_to_session(THD *thd, ulong flag, const Val *val) {
                     std::is_unsigned<Val>::value,
                 "Check value type passed to copy_global_to_session template");
 
-  const ptrdiff_t offset = ((const char *)val - (const char *)&global_system_variables);
+  const ptrdiff_t offset =
+      ((const char *)val - (const char *)&global_system_variables);
   if (opt_slow_query_log_use_global_control & (1ULL << flag))
     *(Val *)((char *)&thd->variables + offset) = *val;
 }
@@ -1838,7 +1838,8 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
        opt_log_queries_not_using_indexes &&
        !(sql_command_flags[thd->lex->sql_command] & CF_STATUS_COMMAND));
   const bool log_this_query =
-      ((thd->server_status & SERVER_QUERY_WAS_SLOW) || warn_no_index || warn_failed_query) &&
+      ((thd->server_status & SERVER_QUERY_WAS_SLOW) || warn_no_index ||
+       warn_failed_query) &&
       (thd->get_examined_row_count() >= thd->variables.min_examined_row_limit);
 
   // The docs say slow queries must be counted even when the log is off.
@@ -1872,7 +1873,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
   /* Follow the slow log filter configuration. */
   if (thd->variables.log_slow_filter != 0 &&
       !(thd->variables.log_slow_filter & thd->query_plan_flags))
-	 return false;
+    return false;
 
   /*
     Don't log the CALL statement if slow statements logging
@@ -1901,7 +1902,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
       query_exec_time < slow_query_log_always_write_time &&
       (thd->variables.long_query_time >= 1000000 ||
        (ulong)query_exec_time < 1000000)) {
-	  return false;
+    return false;
   }
   if (opt_slow_query_log_rate_type == SLOG_RT_SESSION &&
       thd->variables.log_slow_rate_limit &&
@@ -1909,7 +1910,7 @@ bool log_slow_applicable(THD *thd, int sp_sql_command) {
       query_exec_time < slow_query_log_always_write_time &&
       (thd->variables.long_query_time >= 1000000 ||
        (ulong)query_exec_time < 1000000)) {
-	  return false;
+    return false;
   }
 
   const bool suppress_logging =

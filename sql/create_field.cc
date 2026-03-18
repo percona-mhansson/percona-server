@@ -783,7 +783,7 @@ size_t Create_field::key_length() const {
     case MYSQL_TYPE_VAR_STRING:
     case MYSQL_TYPE_STRING:
     case MYSQL_TYPE_VARCHAR:
-    case MYSQL_TYPE_VECTOR: { // Should not be used in practice.
+    case MYSQL_TYPE_VECTOR: {  // Should not be used in practice.
       return std::min(max_display_width_in_bytes(),
                       static_cast<size_t>(MAX_FIELD_BLOBLENGTH));
     }

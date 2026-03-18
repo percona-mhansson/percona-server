@@ -2323,14 +2323,16 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
         order.order->direction != ORDER_DESC &&
         is_function_of_type(*order.order->item, Item_func::VEC_DISTANCE_FUNC) &&
         select_limit != HA_POS_ERROR) {
-      auto dist_func_item = down_cast<Item_func_vec_distance *>((*order.order->item)->real_item());
+      auto dist_func_item = down_cast<Item_func_vec_distance *>(
+          (*order.order->item)->real_item());
       auto left_arg_item = dist_func_item->arguments()[0];
-      auto right_arg_item= dist_func_item->arguments()[1];
+      auto right_arg_item = dist_func_item->arguments()[1];
 
-      for (uint idx = 0 ; idx < table->s->keys; ++idx) {
+      for (uint idx = 0; idx < table->s->keys; ++idx) {
         if (table->key_info[idx].flags & HA_VECTOR) {
           if (left_arg_item->type() == Item::FIELD_ITEM &&
-              down_cast<const Item_field *>(left_arg_item)->field == table->key_info[idx].key_part[0].field &&
+              down_cast<const Item_field *>(left_arg_item)->field ==
+                  table->key_info[idx].key_part[0].field &&
               right_arg_item->const_for_execution()) {
             fprintf(stderr, "FOUND VECTOR INDEX 1\n");
             tab->set_type(JT_VECTOR);
@@ -2341,7 +2343,8 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
             tab->set_vec_limit(select_limit);
             return true;
           } else if (right_arg_item->type() == Item::FIELD_ITEM &&
-                     down_cast<const Item_field *>(right_arg_item)->field == table->key_info[idx].key_part[0].field &&
+                     down_cast<const Item_field *>(right_arg_item)->field ==
+                         table->key_info[idx].key_part[0].field &&
                      left_arg_item->const_for_execution()) {
             fprintf(stderr, "FOUND VECTOR INDEX 2\n");
             tab->set_type(JT_VECTOR);
@@ -6371,8 +6374,7 @@ static ha_rows get_quick_record_count(THD *thd, JOIN_TAB *tab, ha_rows limit,
                                 : const_tables;
     const int error = test_quick_select(
         thd, thd->mem_root, &temp_mem_root, keys_to_use, const_tables,
-        read_tables,
-        limit,
+        read_tables, limit,
         false,  // don't force quick range
         ORDER_NOT_RELEVANT, tab->table(), tab->skip_records_in_range(),
         condition, &tab->needed_reg, tab->table()->force_index,

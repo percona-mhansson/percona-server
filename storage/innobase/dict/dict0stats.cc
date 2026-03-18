@@ -506,7 +506,7 @@ static void dict_stats_copy(dict_table_t *dst, /*!< in/out: destination table */
       src_idx = src_idx->next();
     }
     if (dict_stats_should_ignore_index(dst_idx)) {
-      if (!(dst_idx->type & (DICT_FTS|DICT_VECTOR))) {
+      if (!(dst_idx->type & (DICT_FTS | DICT_VECTOR))) {
         dict_stats_empty_index(dst_idx);
       }
       continue;
@@ -879,7 +879,8 @@ static void dict_stats_update_transient(
   /* Now copy secondary index statistics. */
   auto stats_it = stats.begin();
   for (auto index : table->indexes) {
-    if ((index->type & (DICT_FTS|DICT_VECTOR)) || dict_index_is_spatial(index)) {
+    if ((index->type & (DICT_FTS | DICT_VECTOR)) ||
+        dict_index_is_spatial(index)) {
       continue;
     }
 
@@ -2321,7 +2322,8 @@ static dberr_t dict_stats_update_persistent(dict_table_t *table) {
   for (index = index->next(); index != nullptr; index = index->next()) {
     ut_ad(!dict_index_is_ibuf(index));
 
-    if ((index->type & (DICT_FTS|DICT_VECTOR)) || dict_index_is_spatial(index)) {
+    if ((index->type & (DICT_FTS | DICT_VECTOR)) ||
+        dict_index_is_spatial(index)) {
       continue;
     }
 

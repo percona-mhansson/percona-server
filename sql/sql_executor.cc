@@ -3938,9 +3938,9 @@ AccessPath *QEP_TAB::access_path() {
       break;
 
     case JT_VECTOR:
-      path = NewVectorSearchAccessPath(
-          join()->thd, table(), &ref(), vec(), vec_limit(),
-          /*count_examined_rows=*/true);
+      path = NewVectorSearchAccessPath(join()->thd, table(), &ref(), vec(),
+                                       vec_limit(),
+                                       /*count_examined_rows=*/true);
       used_ref = &ref();
       break;
 

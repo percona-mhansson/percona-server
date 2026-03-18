@@ -2976,7 +2976,7 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
     type = (key.flags & HA_NOSAME) ? DICT_UNIQUE : 0;
   }
 
-  ut_ad(!!(type & (DICT_FTS|DICT_VECTOR)) == (n_uniq == 0));
+  ut_ad(!!(type & (DICT_FTS | DICT_VECTOR)) == (n_uniq == 0));
 
   dict_index_t *index =
       dict_mem_index_create(table->name.m_name, key.name, 0, type, n_fields);
@@ -5205,7 +5205,7 @@ dict_table_t *dd_open_table_one(dd::cache::Dictionary_client *client,
     }
 
     ut_ad(root > 1);
-    ut_ad(index->type & (DICT_FTS|DICT_VECTOR) || root != FIL_NULL ||
+    ut_ad(index->type & (DICT_FTS | DICT_VECTOR) || root != FIL_NULL ||
           dict_table_is_discarded(m_table));
     ut_ad(id != 0);
     index->page = root;

@@ -29,9 +29,9 @@ this program; if not, write to the Free Software Foundation, Inc.,
  Full Text Search interface
  ***********************************************************************/
 
+#include <sys/types.h>
 #include <cstdint>
 #include <cstdio>
-#include <sys/types.h>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -1362,8 +1362,8 @@ dberr_t vec_lock_aux_table(THD *thd, const dict_table_t *parent_table) {
   dict_name::get_table(table_name, db_n, table_n);
 
   MDL_ticket *exclusiv_mdl = nullptr;
-  if (dd::acquire_exclusive_table_mdl(thd, db_n.c_str(), table_n.c_str(),
-                                      false, &exclusiv_mdl)) {
+  if (dd::acquire_exclusive_table_mdl(thd, db_n.c_str(), table_n.c_str(), false,
+                                      &exclusiv_mdl)) {
     return (DB_ERROR);
   }
   return (DB_SUCCESS);
@@ -2430,12 +2430,10 @@ static dict_table_t *vec_create_index_table(trx_t *trx,
   new_table = fts_create_in_mem_aux_table(table_name, table, 4);
 
   dict_mem_table_add_col(new_table, heap, "id", DATA_INT,
-                         DATA_NOT_NULL | DATA_UNSIGNED,
-                         8, true);
+                         DATA_NOT_NULL | DATA_UNSIGNED, 8, true);
 
   dict_mem_table_add_col(new_table, heap, "layer", DATA_INT,
-                         DATA_NOT_NULL | DATA_UNSIGNED,
-                         8, true);
+                         DATA_NOT_NULL | DATA_UNSIGNED, 8, true);
 
   dict_mem_table_add_col(new_table, heap, "vec", DATA_BLOB,
                          (DATA_MTYPE_MAX << 16) | DATA_UNSIGNED | DATA_NOT_NULL,
@@ -2448,9 +2446,9 @@ static dict_table_t *vec_create_index_table(trx_t *trx,
   error = row_create_table_for_mysql(new_table, nullptr, nullptr, trx, nullptr);
 
   if (error == DB_SUCCESS) {
-    dict_index_t *index = dict_mem_index_create(
-        table_name, "VEC_ID_INDEX", new_table->space,
-        DICT_UNIQUE | DICT_CLUSTERED, 1);
+    dict_index_t *index =
+        dict_mem_index_create(table_name, "VEC_ID_INDEX", new_table->space,
+                              DICT_UNIQUE | DICT_CLUSTERED, 1);
     index->add_field("id", 0, true);
 
     trx_dict_op_t op = trx_get_dict_operation(trx);
@@ -2478,7 +2476,7 @@ dberr_t vec_create_index_tables_low(trx_t *trx, dict_index_t *index,
 
   dict_table_t *new_table;
 
-   new_table = vec_create_index_table(trx, index, index->table, heap);
+  new_table = vec_create_index_table(trx, index, index->table, heap);
 
   if (new_table == nullptr) {
     error = DB_FAIL;
@@ -2620,8 +2618,7 @@ dberr_t vec_aux_table_update_row_parsed(
 
 /** Parse neighbours BLOB produced by vec_aux_serialize_neighbor_labels. */
 static bool vec_aux_deserialize_neighbor_labels(
-    const byte *buf, ulint len,
-    std::vector<std::vector<std::size_t>> *out) {
+    const byte *buf, ulint len, std::vector<std::vector<std::size_t>> *out) {
   out->clear();
   if (len < 4) {
     return false;
@@ -2642,8 +2639,7 @@ static bool vec_aux_deserialize_neighbor_labels(
     }
     (*out)[i].resize(cnt);
     for (ulint j = 0; j < cnt; ++j) {
-      (*out)[i][j] =
-          static_cast<std::size_t>(mach_read_from_8(p));
+      (*out)[i][j] = static_cast<std::size_t>(mach_read_from_8(p));
       p += 8;
     }
   }
@@ -2732,8 +2728,9 @@ static bool vec_aux_load_scan_row_cb(void *row, void *user_arg) {
   return true;
 }
 
-dberr_t vec_aux_table_load_all_parsed(trx_t *trx, const dict_table_t *parent_table,
-                                     std::vector<vec_aux_loaded_row_t> *out_rows) {
+dberr_t vec_aux_table_load_all_parsed(
+    trx_t *trx, const dict_table_t *parent_table,
+    std::vector<vec_aux_loaded_row_t> *out_rows) {
   ut_ad(trx != nullptr);
   ut_ad(parent_table != nullptr);
   ut_ad(out_rows != nullptr);

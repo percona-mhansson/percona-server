@@ -68,7 +68,6 @@
 #include "sql/visible_fields.h"
 #include "template_utils.h"
 
-
 using std::make_pair;
 using std::pair;
 
@@ -688,8 +687,7 @@ int FullTextSearchIterator::DoRead() {
 }
 
 VectorSearchIterator::VectorSearchIterator(THD *thd, TABLE *table,
-                                           Index_lookup *ref,
-                                           Item *item,
+                                           Index_lookup *ref, Item *item,
                                            ha_rows limit,
                                            ha_rows *examined_rows)
     : TableRowIterator(thd, table),
@@ -697,9 +695,7 @@ VectorSearchIterator::VectorSearchIterator(THD *thd, TABLE *table,
       m_examined_rows(examined_rows),
       m_first(true),
       m_item(item),
-      m_limit(limit)
-{
-}
+      m_limit(limit) {}
 
 VectorSearchIterator::~VectorSearchIterator() {
   table()->file->ha_index_or_rnd_end();
@@ -720,9 +716,9 @@ bool VectorSearchIterator::DoInit() {
 }
 
 int VectorSearchIterator::DoRead() {
-
   if (m_first) {
-    int error = table()->file->vec_read_first(m_item, table()->record[0], m_limit);
+    int error =
+        table()->file->vec_read_first(m_item, table()->record[0], m_limit);
     if (error) {
       return HandleError(error);
     }

@@ -491,8 +491,7 @@ introduced where a call to log_free_check() is bypassed. */
   ut_a(success);
 
   old_has = row_vers_old_has_index_entry(false, node->pcur.get_rec(), &mtr_vers,
-                                         index, entry, 0, 0,
-                                         thr->prebuilt);
+                                         index, entry, 0, 0, thr->prebuilt);
   if (old_has) {
     err = btr_cur_del_mark_set_sec_rec(BTR_NO_LOCKING_FLAG, btr_cur, true, thr,
                                        &mtr);
@@ -842,7 +841,7 @@ This is the specific function to handle the modify on multi-value indexes.
     dict_index_t *index = node->index;
     dtuple_t *entry;
 
-    if (index->type & (DICT_FTS| DICT_VECTOR)) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       dict_table_next_uncorrupted_index(node->index);
       continue;
     }
@@ -954,7 +953,7 @@ This is the specific function to handle the modify on multi-value indexes.
     dict_index_t *index = node->index;
     dtuple_t *entry;
 
-    if (index->type & (DICT_FTS|DICT_VECTOR)) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       dict_table_next_uncorrupted_index(node->index);
       continue;
     }

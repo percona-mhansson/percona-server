@@ -1737,7 +1737,7 @@ It is then unmarked. Otherwise, the entry is just inserted to the index.
       break;
     }
 
-    if (index->type & (DICT_FTS|DICT_VECTOR)) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       continue;
     }
 
@@ -1936,7 +1936,7 @@ flag_ok:
   }
 
   while ((index = index->next()) != nullptr) {
-    if (index->type & (DICT_FTS|DICT_VECTOR)) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       continue;
     }
 
@@ -2371,9 +2371,9 @@ flag_ok:
   /** It allows to create tuple with virtual column information. */
   dtuple_t *entry = row_build_index_entry_low(row, nullptr, index, heap,
                                               ROW_BUILD_FOR_INSERT);
-  upd_t *update = row_upd_build_difference_binary(index, entry, pcur.get_rec(),
-                                                  cur_offsets, false, nullptr,
-                                                  heap, dup->m_table, thr->prebuilt, &error);
+  upd_t *update = row_upd_build_difference_binary(
+      index, entry, pcur.get_rec(), cur_offsets, false, nullptr, heap,
+      dup->m_table, thr->prebuilt, &error);
   if (error != DB_SUCCESS) {
     goto func_exit;
   }
@@ -2459,7 +2459,7 @@ flag_ok:
       break;
     }
 
-    if (index->type & (DICT_FTS|DICT_VECTOR)) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       continue;
     }
 

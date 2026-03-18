@@ -618,7 +618,8 @@ Requires vec and neighbours BLOBs to be stored inline in the clustered record
 @param[in,out]  trx             transaction
 @param[in]      parent_table    base user table (not the aux table)
 @param[out]     out_rows        cleared then filled with one entry per row
-@return DB_SUCCESS, DB_CORRUPTION on bad neighbour encoding, or other eval error */
+@return DB_SUCCESS, DB_CORRUPTION on bad neighbour encoding, or other eval error
+*/
 [[nodiscard]] dberr_t vec_aux_table_load_all_parsed(
     trx_t *trx, const dict_table_t *parent_table,
     std::vector<vec_aux_loaded_row_t> *out_rows);

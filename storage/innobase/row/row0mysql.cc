@@ -3398,6 +3398,8 @@ dberr_t row_create_index_for_mysql(
 
   auto is_fts = (index->type == DICT_FTS);
 
+  auto is_vector = (index->type == DICT_VECTOR);
+
   if (handler != nullptr && handler->is_intrinsic()) {
     table = handler;
   }
@@ -3509,6 +3511,15 @@ dberr_t row_create_index_for_mysql(
 
     ut_ad(idx);
     err = fts_create_index_tables_low(trx, idx, table->name.m_name, table->id);
+  }
+
+  if (err == DB_SUCCESS && is_vector) {
+    dict_index_t *idx;
+
+    idx = dict_table_get_index_on_name(table, index_name);
+
+    ut_ad(idx);
+    err = vec_create_index_tables_low(trx, idx, table->name.m_name, table->id);
   }
 
 error_handling:
@@ -3960,6 +3971,10 @@ static dberr_t row_discard_tablespace(trx_t *trx, dict_table_t *table,
     fts_drop_tables(trx, table, aux_vec);
   }
 
+  if (dict_table_has_vector_index(table)) {
+    (void)vec_drop_aux_table(trx, table, aux_vec);
+  }
+
   /* Assign a new space ID to the table definition so that purge
   can ignore the changes. Update the system table on disk. */
 
@@ -4155,6 +4170,21 @@ static inline dberr_t row_drop_ancillary_fts_tables(dict_table_t *table,
     }
   }
 
+  if (dict_table_has_vector_index(table)) {
+    ut_ad(table->get_ref_count() == 0);
+    ut_ad(trx_is_started(trx));
+
+    dberr_t verr = vec_drop_aux_table(trx, table, aux_vec);
+
+    if (verr != DB_SUCCESS && verr != DB_FAIL) {
+      ib::error(ER_IB_MSG_988) << " Unable to remove vector auxiliary"
+                                  " table for table "
+                               << table->name << " : " << ut_strerr(verr);
+
+      return (verr);
+    }
+  }
+
   /* The table->fts flag can be set on the table for which
   the cluster index is being rebuilt. Such table might not have
   DICT_TF2_FTS flag set. So keep this out of above
@@ -4297,6 +4327,16 @@ dberr_t row_drop_table_for_mysql(const char *name, trx_t *trx, bool nonatomic,
     if (table && table->fts) {
       dict_sys_mutex_exit();
       err = fts_lock_all_aux_tables(thd, table);
+      dict_sys_mutex_enter();
+
+      if (err != DB_SUCCESS) {
+        dd_table_close(table, nullptr, nullptr, true);
+        goto funct_exit;
+      }
+    }
+    if (table && dict_table_has_vector_index(table)) {
+      dict_sys_mutex_exit();
+      err = vec_lock_aux_table(thd, table);
       dict_sys_mutex_enter();
 
       if (err != DB_SUCCESS) {
@@ -4546,7 +4586,8 @@ dberr_t row_drop_table_for_mysql(const char *name, trx_t *trx, bool nonatomic,
   dd_get_and_save_data_dir_path(table, table_def, true);
 
   if (dict_table_has_fts_index(table) ||
-      DICT_TF2_FLAG_IS_SET(table, DICT_TF2_FTS_HAS_DOC_ID)) {
+      DICT_TF2_FLAG_IS_SET(table, DICT_TF2_FTS_HAS_DOC_ID) ||
+      dict_table_has_vector_index(table)) {
     ut_ad(!is_temp);
 
     err = row_drop_ancillary_fts_tables(table, &aux_vec, trx);
@@ -5058,7 +5099,7 @@ dberr_t row_scan_index_for_mysql(row_prebuilt_t *prebuilt, dict_index_t *index,
     indexes of the old table will remain valid and the new
     table will be unaccessible to MySQL until the
     completion of the ALTER TABLE. */
-  } else if (dict_index_is_online_ddl(index) || (index->type & DICT_FTS)) {
+  } else if (dict_index_is_online_ddl(index) || (index->type & (DICT_FTS|DICT_VECTOR))) {
     /* Full Text index are implemented by auxiliary tables,
     not the B-tree. We also skip secondary indexes that are
     being created online. */

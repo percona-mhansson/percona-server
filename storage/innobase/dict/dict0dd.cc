@@ -1974,7 +1974,7 @@ void dd_visit_keys_with_too_long_parts(
     std::function<void(const KEY &)> visitor) {
   for (uint key_num = 0; key_num < table->s->keys; key_num++) {
     const KEY &key = table->key_info[key_num];
-    if (!(key.flags & (HA_SPATIAL | HA_FULLTEXT))) {
+    if (!(key.flags & (HA_SPATIAL | HA_FULLTEXT | HA_VECTOR))) {
       for (unsigned i = 0; i < key.user_defined_key_parts; i++) {
         const KEY_PART_INFO *key_part = &key.key_part[i];
         if (max_part_len < key_part->length) {
@@ -2904,7 +2904,7 @@ MY_COMPILER_DIAGNOSTIC_POP()
 */
 static inline uint16_t get_index_prefix_len(const KEY &key,
                                             const KEY_PART_INFO *key_part) {
-  if (key.flags & (HA_SPATIAL | HA_FULLTEXT)) {
+  if (key.flags & (HA_SPATIAL | HA_FULLTEXT | HA_VECTOR)) {
     return 0;
   }
 
@@ -2964,6 +2964,10 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
     ut_ad(!table->is_intrinsic());
     type = DICT_FTS;
     n_uniq = 0;
+  } else if (key.flags & HA_VECTOR) {
+    ut_ad(!table->is_intrinsic());
+    type = DICT_VECTOR;
+    n_uniq = 0;
   } else if (key_num == form->primary_key) {
     ut_ad(key.flags & HA_NOSAME);
     ut_ad(n_uniq > 0);
@@ -2972,7 +2976,7 @@ template const dict_index_t *dd_find_index<dd::Partition_index>(
     type = (key.flags & HA_NOSAME) ? DICT_UNIQUE : 0;
   }
 
-  ut_ad(!!(type & DICT_FTS) == (n_uniq == 0));
+  ut_ad(!!(type & (DICT_FTS|DICT_VECTOR)) == (n_uniq == 0));
 
   dict_index_t *index =
       dict_mem_index_create(table->name.m_name, key.name, 0, type, n_fields);
@@ -5201,7 +5205,7 @@ dict_table_t *dd_open_table_one(dd::cache::Dictionary_client *client,
     }
 
     ut_ad(root > 1);
-    ut_ad(index->type & DICT_FTS || root != FIL_NULL ||
+    ut_ad(index->type & (DICT_FTS|DICT_VECTOR) || root != FIL_NULL ||
           dict_table_is_discarded(m_table));
     ut_ad(id != 0);
     index->page = root;
@@ -6567,6 +6571,125 @@ bool dd_create_fts_index_table(const dict_table_t *parent_table,
   /* Store table to dd */
   bool fail = client->store(dd_table);
   if (fail) {
+    ut_d(ut_error);
+    ut_o(return false);
+  }
+
+  return true;
+}
+
+/** Create dd table for vector-index auxiliary table
+@param[in]      parent_table    parent table of vector index
+@param[in,out]  table           vector aux dict table
+@return true on success, false on failure */
+bool dd_create_vector_index_aux_table(const dict_table_t *parent_table,
+                                      dict_table_t *table) {
+  ut_ad(table->get_n_user_cols() == 4);
+  ut_ad(strcmp(table->get_col_name(0), "id") == 0);
+  ut_ad(strcmp(table->get_col_name(1), "layer") == 0);
+  ut_ad(strcmp(table->get_col_name(2), "vec") == 0);
+  ut_ad(strcmp(table->get_col_name(3), "neighbours") == 0);
+
+  std::string db_name;
+  std::string table_name;
+  dict_name::get_table(table->name.m_name, db_name, table_name);
+
+  THD *thd = current_thd;
+  dd::Schema_MDL_locker mdl_locker(thd);
+  dd::cache::Dictionary_client *client = dd::get_dd_client(thd);
+  dd::cache::Dictionary_client::Auto_releaser releaser(client);
+
+  const dd::Schema *schema = nullptr;
+  if (mdl_locker.ensure_locked(db_name.c_str()) ||
+      client->acquire<dd::Schema>(db_name.c_str(), &schema)) {
+    return false;
+  }
+
+  if (schema == nullptr) {
+    my_error(ER_BAD_DB_ERROR, MYF(0), db_name.c_str());
+    return false;
+  }
+
+  std::unique_ptr<dd::Table> dd_table_obj(schema->create_table(thd));
+  dd::Table *dd_table = dd_table_obj.get();
+
+  dd_table->set_name(table_name.c_str());
+  dd_table->set_schema_id(schema->id());
+
+  dd_set_fts_table_options(dd_table, table);
+
+  /* id: 8-byte unsigned integer (clustered PK) */
+  dd::Column *col = dd_table->add_column();
+  col->set_name("id");
+  col->set_type(dd::enum_column_types::LONGLONG);
+  col->set_char_length(20);
+  col->set_numeric_scale(0);
+  col->set_nullable(false);
+  col->set_unsigned(true);
+  col->set_collation_id(my_charset_bin.number);
+  dd_set_fts_nullability(col, table->get_col(0));
+  dd::Column *key_col = col;
+
+  /* layer */
+  col = dd_table->add_column();
+  col->set_name("layer");
+  col->set_type(dd::enum_column_types::LONGLONG);
+  col->set_char_length(20);
+  col->set_numeric_scale(0);
+  col->set_nullable(false);
+  col->set_unsigned(true);
+  col->set_collation_id(my_charset_bin.number);
+  dd_set_fts_nullability(col, table->get_col(1));
+
+  /* vec BLOB */
+  col = dd_table->add_column();
+  col->set_name("vec");
+  col->set_type(dd::enum_column_types::BLOB);
+  col->set_char_length(8);
+  col->set_nullable(false);
+  col->set_collation_id(my_charset_bin.number);
+  dd_set_fts_nullability(col, table->get_col(2));
+
+  /* neighbours BLOB */
+  col = dd_table->add_column();
+  col->set_name("neighbours");
+  col->set_type(dd::enum_column_types::BLOB);
+  col->set_char_length(8);
+  col->set_nullable(false);
+  col->set_collation_id(my_charset_bin.number);
+  dd_set_fts_nullability(col, table->get_col(3));
+
+  dd::Index *index = dd_table->add_index();
+  index->set_name("VEC_ID_INDEX");
+  index->set_algorithm(dd::Index::IA_BTREE);
+  index->set_algorithm_explicit(false);
+  index->set_visible(true);
+  index->set_type(dd::Index::IT_PRIMARY);
+  index->set_ordinal_position(1);
+  index->set_generated(false);
+  index->set_engine(dd_table->engine());
+  index->options().set("flags", 32);
+
+  dd::Index_element *index_elem = index->add_element(key_col);
+  index_elem->set_length(8);
+
+  dd::Object_id dd_space_id;
+  if (!dd_get_or_assign_fts_tablespace_id(parent_table, table, dd_space_id)) {
+    return false;
+  }
+
+  table->dd_space_id = dd_space_id;
+
+  dd_write_table(dd_space_id, dd_table, table);
+
+  MDL_ticket *mdl_ticket = nullptr;
+  if (dd::acquire_exclusive_table_mdl(thd, db_name.c_str(), table_name.c_str(),
+                                      false, &mdl_ticket)) {
+    ut_d(ut_error);
+    ut_o(return false);
+  }
+
+  if (client->store(dd_table)) {
     ut_d(ut_error);
     ut_o(return false);
   }

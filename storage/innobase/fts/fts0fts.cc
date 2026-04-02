@@ -29,9 +29,12 @@ this program; if not, write to the Free Software Foundation, Inc.,
  Full Text Search interface
  ***********************************************************************/
 
-#include <current_thd.h>
+#include <cstdint>
+#include <cstdio>
 #include <sys/types.h>
+#include <cstring>
 #include <new>
+#include <vector>
 
 #include "btr0pcur.h"
 #include "dict0priv.h"
@@ -50,12 +53,16 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "my_dbug.h"
 #include "mysql/strings/m_ctype.h"
 
+#include "current_thd.h"
 #include "dict0dd.h"
+#include "dict0dict.h"
+#include "que0que.h"
 #include "row0mysql.h"
 #include "row0sel.h"
 #include "row0upd.h"
 #include "sync0sync.h"
 #include "trx0roll.h"
+#include "ut0byte.h"
 #include "ut0new.h"
 
 static const ulint FTS_MAX_ID_LEN = 32;
@@ -1289,8 +1296,8 @@ void fts_free_aux_names(aux_name_vec_t *aux_vec) {
 @param[in]      table_name      table to drop
 @param[in,out]  aux_vec         fts aux table name vector
 @return DB_SUCCESS or error code */
-static dberr_t fts_drop_table(trx_t *trx, const char *table_name,
-                              aux_name_vec_t *aux_vec) {
+dberr_t fts_drop_table(trx_t *trx, const char *table_name,
+                       aux_name_vec_t *aux_vec) {
   dict_table_t *table;
   dberr_t error = DB_SUCCESS;
   THD *thd = current_thd;
@@ -1319,7 +1326,7 @@ static dberr_t fts_drop_table(trx_t *trx, const char *table_name,
     error = row_drop_table_for_mysql(table_name, trx, false, nullptr);
 
     if (error != DB_SUCCESS) {
-      ib::error(ER_IB_MSG_464) << "Unable to drop FTS index aux table "
+      ib::error(ER_IB_MSG_464) << "Unable to drop auxiliary table "
                                << table_name << ": " << ut_strerr(error);
       return (error);
     }
@@ -1341,6 +1348,35 @@ static dberr_t fts_drop_table(trx_t *trx, const char *table_name,
   }
 
   return (error);
+}
+
+dberr_t vec_lock_aux_table(THD *thd, const dict_table_t *parent_table) {
+  char table_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(table_name, sizeof(table_name), "%s_vec",
+                              parent_table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(table_name));
+
+  std::string db_n;
+  std::string table_n;
+  dict_name::get_table(table_name, db_n, table_n);
+
+  MDL_ticket *exclusiv_mdl = nullptr;
+  if (dd::acquire_exclusive_table_mdl(thd, db_n.c_str(), table_n.c_str(),
+                                      false, &exclusiv_mdl)) {
+    return (DB_ERROR);
+  }
+  return (DB_SUCCESS);
+}
+
+dberr_t vec_drop_aux_table(trx_t *trx, const dict_table_t *parent_table,
+                           aux_name_vec_t *aux_vec) {
+  char table_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(table_name, sizeof(table_name), "%s_vec",
+                              parent_table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(table_name));
+  return (fts_drop_table(trx, table_name, aux_vec));
 }
 
 /** Rename a single auxiliary table due to database name change.
@@ -2278,6 +2314,53 @@ dberr_t fts_create_index_dd_tables(dict_table_t *table) {
   return (error);
 }
 
+dberr_t vec_create_index_dd_tables(dict_table_t *table) {
+  bool need_dd = false;
+
+  for (dict_index_t *index = table->first_index(); index != nullptr;
+       index = index->next()) {
+    if ((index->type & DICT_VECTOR) && index->fill_dd) {
+      need_dd = true;
+      break;
+    }
+  }
+
+  if (!need_dd) {
+    return DB_SUCCESS;
+  }
+
+  char vec_aux_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(vec_aux_name, sizeof(vec_aux_name), "%s_vec",
+                              table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(vec_aux_name));
+
+  dict_table_t *aux_table = dd_table_open_on_name_in_mem(vec_aux_name, false);
+  if (aux_table == nullptr) {
+    ib::warn(ER_IB_MSG_466)
+        << "vector aux table not in dict cache for DD: " << vec_aux_name;
+    return DB_FAIL;
+  }
+
+  const bool ok = dd_create_vector_index_aux_table(table, aux_table);
+  dd_table_close(aux_table, nullptr, nullptr, false);
+
+  if (!ok) {
+    ib::warn(ER_IB_MSG_466)
+        << "dd_create_vector_index_aux_table failed for " << vec_aux_name;
+    return DB_FAIL;
+  }
+
+  for (dict_index_t *index = table->first_index(); index != nullptr;
+       index = index->next()) {
+    if ((index->type & DICT_VECTOR) && index->fill_dd) {
+      index->fill_dd = false;
+    }
+  }
+
+  return DB_SUCCESS;
+}
+
 /** Create auxiliary index tables for an FTS index.
 @param[in,out]  trx             transaction
 @param[in]      index           the index instance
@@ -2330,6 +2413,399 @@ dberr_t fts_create_index_tables_low(trx_t *trx, dict_index_t *index,
   mem_heap_free(heap);
 
   return (error);
+}
+
+static dict_table_t *vec_create_index_table(trx_t *trx,
+                                            const dict_index_t *index,
+                                            const dict_table_t *table,
+                                            mem_heap_t *heap) {
+  dict_table_t *new_table = nullptr;
+  dberr_t error;
+
+  ut_ad(index->type & DICT_VECTOR);
+
+  char table_name[MAX_FULL_NAME_LEN];
+  sprintf(table_name, "%s_vec", table->name.m_name);
+
+  new_table = fts_create_in_mem_aux_table(table_name, table, 4);
+
+  dict_mem_table_add_col(new_table, heap, "id", DATA_INT,
+                         DATA_NOT_NULL | DATA_UNSIGNED,
+                         8, true);
+
+  dict_mem_table_add_col(new_table, heap, "layer", DATA_INT,
+                         DATA_NOT_NULL | DATA_UNSIGNED,
+                         8, true);
+
+  dict_mem_table_add_col(new_table, heap, "vec", DATA_BLOB,
+                         (DATA_MTYPE_MAX << 16) | DATA_UNSIGNED | DATA_NOT_NULL,
+                         0, true);
+
+  dict_mem_table_add_col(new_table, heap, "neighbours", DATA_BLOB,
+                         (DATA_MTYPE_MAX << 16) | DATA_UNSIGNED | DATA_NOT_NULL,
+                         0, true);
+
+  error = row_create_table_for_mysql(new_table, nullptr, nullptr, trx, nullptr);
+
+  if (error == DB_SUCCESS) {
+    dict_index_t *index = dict_mem_index_create(
+        table_name, "VEC_ID_INDEX", new_table->space,
+        DICT_UNIQUE | DICT_CLUSTERED, 1);
+    index->add_field("id", 0, true);
+
+    trx_dict_op_t op = trx_get_dict_operation(trx);
+
+    error = row_create_index_for_mysql(index, trx, nullptr, nullptr);
+
+    trx->dict_operation = op;
+  }
+
+  if (error != DB_SUCCESS) {
+    trx->error_state = error;
+    new_table = nullptr;
+    ib::warn(ER_IB_MSG_466)
+        << "Failed to create vector index table " << table_name;
+  }
+
+  return (new_table);
+}
+
+dberr_t vec_create_index_tables_low(trx_t *trx, dict_index_t *index,
+                                    const char *table_name,
+                                    table_id_t table_id) {
+  dberr_t error = DB_SUCCESS;
+  mem_heap_t *heap = mem_heap_create(1024, UT_LOCATION_HERE);
+
+  dict_table_t *new_table;
+
+   new_table = vec_create_index_table(trx, index, index->table, heap);
+
+  if (new_table == nullptr) {
+    error = DB_FAIL;
+  }
+
+  if (error == DB_SUCCESS) {
+    index->fill_dd = true;
+  }
+
+  mem_heap_free(heap);
+
+  return (error);
+}
+
+/** Serialize NeighborLabelListsByLevel-style data to a BLOB (big-endian):
+ 4-byte nlevels, then per level: 4-byte count, then count × 8-byte labels. */
+static ulint vec_aux_serialize_neighbor_labels(
+    const std::vector<std::vector<std::size_t>> &neighbors_by_level,
+    byte **buf_out) {
+  const ulint nlevels = static_cast<ulint>(neighbors_by_level.size());
+  ulint need = 4;
+
+  for (ulint i = 0; i < nlevels; ++i) {
+    need += 4 + static_cast<ulint>(neighbors_by_level[i].size()) * 8;
+  }
+
+  byte *buf = static_cast<byte *>(ut::malloc(need));
+  byte *p = buf;
+
+  mach_write_to_4(p, nlevels);
+  p += 4;
+
+  for (ulint i = 0; i < nlevels; ++i) {
+    const auto &level = neighbors_by_level[i];
+    mach_write_to_4(p, level.size());
+    p += 4;
+    for (std::size_t lab : level) {
+      mach_write_to_8(p, static_cast<uint64_t>(lab));
+      p += 8;
+    }
+  }
+
+  ut_ad(p == buf + need);
+  *buf_out = buf;
+  return (need);
+}
+
+dberr_t vec_aux_table_insert_row_parsed(
+    trx_t *trx, const dict_table_t *parent_table, std::uint64_t node_id,
+    std::uint64_t node_layer, const byte *vec, ulint vec_len,
+    const std::vector<std::vector<std::size_t>> &neighbors_by_level) {
+  ut_ad(parent_table != nullptr);
+  ut_ad(vec_len == 0 || vec != nullptr);
+
+  char table_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(table_name, sizeof(table_name), "%s_vec",
+                              parent_table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(table_name));
+
+  byte *neigh_blob = nullptr;
+  const ulint neigh_len =
+      vec_aux_serialize_neighbor_labels(neighbors_by_level, &neigh_blob);
+
+  pars_info_t *info = pars_info_create();
+
+  pars_info_bind_id(info, true, "vec_table", table_name);
+
+  uint64_t id_buf;
+  uint64_t layer_buf;
+
+  fts_write_doc_id(reinterpret_cast<byte *>(&id_buf), node_id);
+  fts_write_doc_id(reinterpret_cast<byte *>(&layer_buf), node_layer);
+
+  pars_info_bind_int8_literal(info, "id", &id_buf);
+  pars_info_bind_int8_literal(info, "layer", &layer_buf);
+
+  static const byte vec_empty_placeholder = 0;
+
+  const byte *vec_bind = vec_len > 0 ? vec : &vec_empty_placeholder;
+
+  pars_info_bind_literal(info, "vec", vec_bind, vec_len, DATA_BLOB,
+                         DATA_BINARY_TYPE);
+  pars_info_bind_literal(info, "neighbours", neigh_blob, neigh_len, DATA_BLOB,
+                         DATA_BINARY_TYPE);
+
+  que_t *graph = fts_parse_sql(
+      nullptr, info,
+      "BEGIN\n"
+      "INSERT INTO $vec_table VALUES (:id, :layer, :vec, :neighbours);");
+
+  dberr_t error = fts_eval_sql(trx, graph);
+
+  fts_que_graph_free(graph);
+  ut::free(neigh_blob);
+
+  return (error);
+}
+
+dberr_t vec_aux_table_update_row_parsed(
+    trx_t *trx, const dict_table_t *parent_table, std::uint64_t node_id,
+    const std::vector<std::vector<std::size_t>> &neighbors_by_level) {
+  ut_ad(parent_table != nullptr);
+  ut_ad(trx != nullptr);
+
+  char table_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(table_name, sizeof(table_name), "%s_vec",
+                              parent_table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(table_name));
+
+  byte *neigh_blob = nullptr;
+  const ulint neigh_len =
+      vec_aux_serialize_neighbor_labels(neighbors_by_level, &neigh_blob);
+
+  pars_info_t *info = pars_info_create();
+
+  pars_info_bind_id(info, true, "vec_table", table_name);
+
+  uint64_t id_buf;
+  fts_write_doc_id(reinterpret_cast<byte *>(&id_buf), node_id);
+  pars_info_bind_int8_literal(info, "id", &id_buf);
+
+  pars_info_bind_literal(info, "neighbours", neigh_blob, neigh_len, DATA_BLOB,
+                         DATA_BINARY_TYPE);
+
+  que_t *graph = fts_parse_sql(
+      nullptr, info,
+      "BEGIN\n"
+      "UPDATE $vec_table SET neighbours = :neighbours WHERE id = :id;");
+
+  dberr_t error = fts_eval_sql(trx, graph);
+
+  fts_que_graph_free(graph);
+  ut::free(neigh_blob);
+
+  return error;
+}
+
+/** Parse neighbours BLOB produced by vec_aux_serialize_neighbor_labels. */
+static bool vec_aux_deserialize_neighbor_labels(
+    const byte *buf, ulint len,
+    std::vector<std::vector<std::size_t>> *out) {
+  out->clear();
+  if (len < 4) {
+    return false;
+  }
+  const byte *p = buf;
+  const byte *const end = buf + len;
+  const ulint nlevels = mach_read_from_4(p);
+  p += 4;
+  out->resize(nlevels);
+  for (ulint i = 0; i < nlevels; ++i) {
+    if (static_cast<ulint>(end - p) < 4) {
+      return false;
+    }
+    const ulint cnt = mach_read_from_4(p);
+    p += 4;
+    if (static_cast<ulint>(end - p) < cnt * 8) {
+      return false;
+    }
+    (*out)[i].resize(cnt);
+    for (ulint j = 0; j < cnt; ++j) {
+      (*out)[i][j] =
+          static_cast<std::size_t>(mach_read_from_8(p));
+      p += 8;
+    }
+  }
+  return (p == end);
+}
+
+struct vec_aux_load_rows_ctx_t {
+  std::vector<vec_aux_loaded_row_t> *rows;
+  dberr_t *row_error;
+};
+
+/** Cursor callback: append one aux row to ctx->rows (inline BLOBs only).
+@return true if more FETCH iterations are allowed (same contract as
+fts_read_stopword); false ends the cursor (fetch_step sets NO_MORE_ROWS). */
+static bool vec_aux_load_scan_row_cb(void *row, void *user_arg) {
+  vec_aux_load_rows_ctx_t *const ctx =
+      static_cast<vec_aux_load_rows_ctx_t *>(user_arg);
+  sel_node_t *const node = static_cast<sel_node_t *>(row);
+  que_node_t *exp = node->select_list;
+
+  vec_aux_loaded_row_t rec{};
+
+  /* id (same 8-byte BE encoding as fts_write_doc_id in insert path) */
+  dfield_t *df = que_node_get_val(exp);
+  ulint len = dfield_get_len(df);
+  if (len == UNIV_SQL_NULL || len != 8) {
+    *ctx->row_error = DB_CORRUPTION;
+    return false; /* terminate cursor */
+  }
+  std::get<0>(rec) =
+      fts_read_doc_id(static_cast<const byte *>(dfield_get_data(df)));
+  exp = que_node_get_next(exp);
+
+  /* layer */
+  df = que_node_get_val(exp);
+  len = dfield_get_len(df);
+  if (len == UNIV_SQL_NULL || len != 8) {
+    *ctx->row_error = DB_CORRUPTION;
+    return false;
+  }
+  std::get<1>(rec) =
+      fts_read_doc_id(static_cast<const byte *>(dfield_get_data(df)));
+  exp = que_node_get_next(exp);
+
+  /* vec BLOB — assume inline storage (not external) */
+  df = que_node_get_val(exp);
+  len = dfield_get_len(df);
+  if (len == UNIV_SQL_NULL) {
+    *ctx->row_error = DB_CORRUPTION;
+    return false;
+  }
+  ut_ad(!dfield_is_ext(df));
+  {
+    const byte *const vp = static_cast<const byte *>(dfield_get_data(df));
+    if (len % sizeof(float) != 0) {
+      *ctx->row_error = DB_CORRUPTION;
+      return false;
+    }
+    const size_t nfloat = len / sizeof(float);
+    std::get<2>(rec).resize(nfloat);
+    if (nfloat > 0) {
+      memcpy(std::get<2>(rec).data(), vp, len);
+    }
+  }
+  exp = que_node_get_next(exp);
+
+  /* neighbours BLOB — assume inline storage */
+  df = que_node_get_val(exp);
+  len = dfield_get_len(df);
+  if (len == UNIV_SQL_NULL) {
+    *ctx->row_error = DB_CORRUPTION;
+    return false;
+  }
+  ut_ad(!dfield_is_ext(df));
+  {
+    const byte *const np = static_cast<const byte *>(dfield_get_data(df));
+    if (!vec_aux_deserialize_neighbor_labels(np, len, &std::get<3>(rec))) {
+      *ctx->row_error = DB_CORRUPTION;
+      return false;
+    }
+  }
+  exp = que_node_get_next(exp);
+  ut_a(exp == nullptr);
+
+  ctx->rows->push_back(std::move(rec));
+  return true;
+}
+
+dberr_t vec_aux_table_load_all_parsed(trx_t *trx, const dict_table_t *parent_table,
+                                     std::vector<vec_aux_loaded_row_t> *out_rows) {
+  ut_ad(trx != nullptr);
+  ut_ad(parent_table != nullptr);
+  ut_ad(out_rows != nullptr);
+
+  out_rows->clear();
+
+  char table_name[MAX_FULL_NAME_LEN];
+  const int tn_len = snprintf(table_name, sizeof(table_name), "%s_vec",
+                              parent_table->name.m_name);
+  ut_a(tn_len > 0);
+  ut_a(static_cast<size_t>(tn_len) < sizeof(table_name));
+
+  /* The internal parser opens $vec_table in pars_retrieve_table_def via
+  dd_table_open_on_name_in_mem / dd_table_open_on_name. Pre-open here (same
+  idea as fts_parse_sql with a non-null fts_table) pins the aux table in the
+  dict cache before pars_mutex. The aux table is registered in the global DD
+  (dd_create_vector_index_aux_table), so the DD path is sufficient; no
+  dict_load_table fallback. If we cannot open it (missing aux, no THD, etc.),
+  skip parsing — pars_retrieve_table_def would assert on unresolved table. */
+  THD *thd = current_thd;
+  dict_table_t *vec_aux_ref = nullptr;
+  MDL_ticket *vec_aux_mdl = nullptr;
+
+  vec_aux_ref = dd_table_open_on_name_in_mem(table_name, false);
+  if (vec_aux_ref == nullptr && thd != nullptr) {
+    vec_aux_ref = dd_table_open_on_name(thd, &vec_aux_mdl, table_name, false,
+                                        DICT_ERR_IGNORE_NONE);
+  }
+
+  if (vec_aux_ref == nullptr) {
+    return DB_SUCCESS;
+  }
+
+  dberr_t row_error = DB_SUCCESS;
+  vec_aux_load_rows_ctx_t load_ctx{out_rows, &row_error};
+
+  pars_info_t *info = pars_info_create();
+  pars_info_bind_id(info, true, "vec_table", table_name);
+  pars_info_bind_function(info, "my_func", vec_aux_load_scan_row_cb, &load_ctx);
+
+  que_t *graph = fts_parse_sql(
+      nullptr, info,
+      "DECLARE FUNCTION my_func;\n"
+      "DECLARE CURSOR c IS SELECT id, layer, vec, neighbours FROM $vec_table;\n"
+      "BEGIN\n"
+      "\n"
+      "OPEN c;\n"
+      "WHILE 1 = 1 LOOP\n"
+      "  FETCH c INTO my_func();\n"
+      "  IF c % NOTFOUND THEN\n"
+      "    EXIT;\n"
+      "  END IF;\n"
+      "END LOOP;\n"
+      "CLOSE c;");
+
+  dberr_t error = fts_eval_sql(trx, graph);
+
+  fts_que_graph_free(graph);
+
+  if (vec_aux_ref != nullptr) {
+    dd_table_close(vec_aux_ref, thd, &vec_aux_mdl, false);
+  }
+
+  if (error == DB_SUCCESS && row_error != DB_SUCCESS) {
+    error = row_error;
+  }
+
+  if (error != DB_SUCCESS) {
+    out_rows->clear();
+  }
+
+  return error;
 }
 
 /** Creates the column specific ancillary tables needed for supporting an

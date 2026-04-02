@@ -7,12 +7,23 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <unordered_set>
+#include <functional>
 #include <list>
 #include <memory>
+#include <vector>
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <tuple>
 
 namespace hnswlib {
 typedef unsigned int tableint;
 typedef unsigned int linklistsizeint;
+
+/** (label_id, layer, vector, neighbors_by_level); same as InnoDB vec_aux_loaded_row_t. */
+using VecAuxLoadedRowTuple =
+    std::tuple<std::uint64_t, std::uint64_t, std::vector<float>,
+               std::vector<std::vector<std::size_t>>>;
 
 template<typename dist_t>
 class HierarchicalNSW : public AlgorithmInterface<dist_t> {
@@ -69,6 +80,51 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
 
     std::mutex deleted_elements_lock;  // lock for deleted_elements
     std::unordered_set<tableint> deleted_elements;  // contains internal ids of deleted elements
+
+    // Per-level neighbor lists use external labels (not internal tableint ids).
+    using NeighborLabelList = std::vector<labeltype>;
+    // neighbors_by_level[level] = neighbor labels at that level (level in [0, element_levels_[id]])
+    using NeighborLabelListsByLevel = std::vector<NeighborLabelList>;
+
+    /*
+     * Optional callbacks (public API). data_point is the vector last passed to addPoint where applicable.
+     *
+     * add_point_update_callback_ is also invoked for neighbors whose edge lists change during insert
+     *   (mutuallyConnectNewElement) or updatePoint/repair: once per distinct internal id, with
+     *   neighbors_by_level gathered after all levels are updated for that batch (neighbor labels).
+     *
+     * add_point_insert_callback_ / add_point_update_callback_: invoked after the full operation;
+     *   neighbors_by_level lists neighbor labels per level for that node (insert/update target).
+     * When addPoint is entered from the label-locked overload, getLabelOpMutex(label) may still be held.
+     * callback_context is the pointer last passed to addPoint / updatePoint for this operation.
+     */
+    std::function<void(labeltype label, tableint internal_id, const void *data_point,
+                       const NeighborLabelListsByLevel &neighbors_by_level,
+                       void *callback_context)>
+        add_point_insert_callback_{};
+    std::function<void(labeltype label, tableint internal_id, const void *data_point,
+                       const NeighborLabelListsByLevel &neighbors_by_level,
+                       void *callback_context)>
+        add_point_update_callback_{};
+
+    void setAddPointInsertCallback(
+        std::function<void(labeltype label, tableint internal_id, const void *data_point,
+                           const NeighborLabelListsByLevel &neighbors_by_level,
+                           void *callback_context)> cb) {
+        add_point_insert_callback_ = std::move(cb);
+    }
+
+    void setAddPointUpdateCallback(
+        std::function<void(labeltype label, tableint internal_id, const void *data_point,
+                           const NeighborLabelListsByLevel &neighbors_by_level,
+                           void *callback_context)> cb) {
+        add_point_update_callback_ = std::move(cb);
+    }
+
+    void clearAddPointCallbacks() {
+        add_point_insert_callback_ = {};
+        add_point_update_callback_ = {};
+    }
 
 
     HierarchicalNSW(SpaceInterface<dist_t> *s) {
@@ -508,7 +564,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint cur_c,
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> &top_candidates,
         int level,
-        bool isUpdate) {
+        bool isUpdate,
+        std::unordered_set<tableint> *out_updated_neighbor_ids = nullptr) {
         size_t Mcurmax = level ? maxM_ : maxM0_;
         getNeighborsByHeuristic2(top_candidates, M_);
         if (top_candidates.size() > M_)
@@ -550,79 +607,89 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 data[idx] = selectedNeighbors[idx];
             }
         }
+        // cur_c is omitted from out_updated_neighbor_ids; add_point_insert/update callbacks cover it.
 
         for (size_t idx = 0; idx < selectedNeighbors.size(); idx++) {
-            std::unique_lock <std::mutex> lock(link_list_locks_[selectedNeighbors[idx]]);
+            tableint neigh_id = selectedNeighbors[idx];
+            bool list_changed = false;
+            {
+                std::unique_lock <std::mutex> lock(link_list_locks_[neigh_id]);
 
-            linklistsizeint *ll_other;
-            if (level == 0)
-                ll_other = get_linklist0(selectedNeighbors[idx]);
-            else
-                ll_other = get_linklist(selectedNeighbors[idx], level);
+                linklistsizeint *ll_other;
+                if (level == 0)
+                    ll_other = get_linklist0(neigh_id);
+                else
+                    ll_other = get_linklist(neigh_id, level);
 
-            size_t sz_link_list_other = getListCount(ll_other);
+                size_t sz_link_list_other = getListCount(ll_other);
 
-            if (sz_link_list_other > Mcurmax)
-                throw std::runtime_error("Bad value of sz_link_list_other");
-            if (selectedNeighbors[idx] == cur_c)
-                throw std::runtime_error("Trying to connect an element to itself");
-            if (level > element_levels_[selectedNeighbors[idx]])
-                throw std::runtime_error("Trying to make a link on a non-existent level");
+                if (sz_link_list_other > Mcurmax)
+                    throw std::runtime_error("Bad value of sz_link_list_other");
+                if (neigh_id == cur_c)
+                    throw std::runtime_error("Trying to connect an element to itself");
+                if (level > element_levels_[neigh_id])
+                    throw std::runtime_error("Trying to make a link on a non-existent level");
 
-            tableint *data = (tableint *) (ll_other + 1);
+                tableint *data = (tableint *) (ll_other + 1);
 
-            bool is_cur_c_present = false;
-            if (isUpdate) {
-                for (size_t j = 0; j < sz_link_list_other; j++) {
-                    if (data[j] == cur_c) {
-                        is_cur_c_present = true;
-                        break;
+                bool is_cur_c_present = false;
+                if (isUpdate) {
+                    for (size_t j = 0; j < sz_link_list_other; j++) {
+                        if (data[j] == cur_c) {
+                            is_cur_c_present = true;
+                            break;
+                        }
+                    }
+                }
+
+                // If cur_c is already present in the neighboring connections of `neigh_id` then no need to modify any connections or run the heuristics.
+                if (!is_cur_c_present) {
+                    if (sz_link_list_other < Mcurmax) {
+                        data[sz_link_list_other] = cur_c;
+                        setListCount(ll_other, sz_link_list_other + 1);
+                        list_changed = true;
+                    } else {
+                        // finding the "weakest" element to replace it with the new one
+                        dist_t d_max = fstdistfunc_(getDataByInternalId(cur_c), getDataByInternalId(neigh_id),
+                                                    dist_func_param_);
+                        // Heuristic:
+                        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates;
+                        candidates.emplace(d_max, cur_c);
+
+                        for (size_t j = 0; j < sz_link_list_other; j++) {
+                            candidates.emplace(
+                                    fstdistfunc_(getDataByInternalId(data[j]), getDataByInternalId(neigh_id),
+                                                    dist_func_param_), data[j]);
+                        }
+
+                        getNeighborsByHeuristic2(candidates, Mcurmax);
+
+                        int indx = 0;
+                        while (candidates.size() > 0) {
+                            data[indx] = candidates.top().second;
+                            candidates.pop();
+                            indx++;
+                        }
+
+                        setListCount(ll_other, indx);
+                        list_changed = true;
+                        // Nearest K:
+                        /*int indx = -1;
+                        for (int j = 0; j < sz_link_list_other; j++) {
+                            dist_t d = fstdistfunc_(getDataByInternalId(data[j]), getDataByInternalId(rez[idx]), dist_func_param_);
+                            if (d > d_max) {
+                                indx = j;
+                                d_max = d;
+                            }
+                        }
+                        if (indx >= 0) {
+                            data[indx] = cur_c;
+                        } */
                     }
                 }
             }
-
-            // If cur_c is already present in the neighboring connections of `selectedNeighbors[idx]` then no need to modify any connections or run the heuristics.
-            if (!is_cur_c_present) {
-                if (sz_link_list_other < Mcurmax) {
-                    data[sz_link_list_other] = cur_c;
-                    setListCount(ll_other, sz_link_list_other + 1);
-                } else {
-                    // finding the "weakest" element to replace it with the new one
-                    dist_t d_max = fstdistfunc_(getDataByInternalId(cur_c), getDataByInternalId(selectedNeighbors[idx]),
-                                                dist_func_param_);
-                    // Heuristic:
-                    std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidates;
-                    candidates.emplace(d_max, cur_c);
-
-                    for (size_t j = 0; j < sz_link_list_other; j++) {
-                        candidates.emplace(
-                                fstdistfunc_(getDataByInternalId(data[j]), getDataByInternalId(selectedNeighbors[idx]),
-                                                dist_func_param_), data[j]);
-                    }
-
-                    getNeighborsByHeuristic2(candidates, Mcurmax);
-
-                    int indx = 0;
-                    while (candidates.size() > 0) {
-                        data[indx] = candidates.top().second;
-                        candidates.pop();
-                        indx++;
-                    }
-
-                    setListCount(ll_other, indx);
-                    // Nearest K:
-                    /*int indx = -1;
-                    for (int j = 0; j < sz_link_list_other; j++) {
-                        dist_t d = fstdistfunc_(getDataByInternalId(data[j]), getDataByInternalId(rez[idx]), dist_func_param_);
-                        if (d > d_max) {
-                            indx = j;
-                            d_max = d;
-                        }
-                    }
-                    if (indx >= 0) {
-                        data[indx] = cur_c;
-                    } */
-                }
+            if (list_changed && out_updated_neighbor_ids != nullptr) {
+                out_updated_neighbor_ids->insert(neigh_id);
             }
         }
 
@@ -821,6 +888,103 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return;
     }
 
+    /**
+     * Rebuild the in-memory graph from rows produced by the vector-index aux table
+     * (same logical layout as insert/update callbacks: external labels in neighbor lists).
+     * Call only on a freshly constructed index (cur_element_count == 0, no prior addPoint).
+     * Internal ids follow input row order (like insert order).
+     * Row shape and graph consistency are checked with assert() (debug only); OOM still throws.
+     */
+    void loadIndex(const std::vector<VecAuxLoadedRowTuple> &rows) {
+        const size_t n = rows.size();
+        assert(cur_element_count == 0);
+        assert(n <= max_elements_);
+        assert(n <= static_cast<size_t>(std::numeric_limits<tableint>::max()));
+
+        const size_t expected_dim = data_size_ / sizeof(float);
+        assert(data_size_ > 0 && data_size_ % sizeof(float) == 0);
+
+        for (const VecAuxLoadedRowTuple &row : rows) {
+            assert(std::get<2>(row).size() == expected_dim);
+            const std::uint64_t layer_u64 = std::get<1>(row);
+            assert(layer_u64 <=
+                   static_cast<std::uint64_t>(std::numeric_limits<int>::max()));
+            const auto &neighbors = std::get<3>(row);
+            if (neighbors.empty()) {
+                assert(layer_u64 == 0);
+            } else {
+                assert(neighbors.size() == static_cast<size_t>(layer_u64) + 1);
+            }
+        }
+
+        if (n == 0) {
+            return;
+        }
+
+        std::unique_lock<std::mutex> label_table_lock(label_lookup_lock);
+
+        memset(data_level0_memory_, 0, n * size_data_per_element_);
+
+        for (size_t pos = 0; pos < n; ++pos) {
+            const VecAuxLoadedRowTuple &row = rows[pos];
+            const tableint internal_id = static_cast<tableint>(pos);
+            const labeltype label = static_cast<labeltype>(std::get<0>(row));
+            assert(label_lookup_.emplace(label, internal_id).second);
+            memcpy(getExternalLabeLp(internal_id), &label, sizeof(labeltype));
+            memcpy(getDataByInternalId(internal_id), std::get<2>(row).data(),
+                   data_size_);
+
+            const int top_level = static_cast<int>(std::get<1>(row));
+            element_levels_[internal_id] = top_level;
+            if (top_level > maxlevel_) {
+                maxlevel_ = top_level;
+                enterpoint_node_ = internal_id;
+            }
+            if (top_level > 0) {
+                const size_t link_bytes = size_links_per_element_ * static_cast<size_t>(top_level);
+                linkLists_[internal_id] = (char *) malloc(link_bytes);
+                if (linkLists_[internal_id] == nullptr) {
+                    throw std::runtime_error(
+                        "Not enough memory: loadIndex(VecAuxLoadedRowTuple) linklist allocation");
+                }
+                memset(linkLists_[internal_id], 0, link_bytes);
+            } else {
+                linkLists_[internal_id] = nullptr;
+            }
+        }
+
+        for (size_t pos = 0; pos < n; ++pos) {
+            const VecAuxLoadedRowTuple &row = rows[pos];
+            const tableint internal_id = static_cast<tableint>(pos);
+            const int top = element_levels_[internal_id];
+            for (int lev = 0; lev <= top; ++lev) {
+                const std::vector<std::size_t> *nbr_labels = nullptr;
+                if (!std::get<3>(row).empty()) {
+                    nbr_labels = &std::get<3>(row)[static_cast<size_t>(lev)];
+                }
+                const size_t nbr_cnt = nbr_labels != nullptr ? nbr_labels->size() : 0;
+                const size_t max_neighbors = static_cast<size_t>(lev == 0 ? maxM0_ : maxM_);
+                assert(nbr_cnt <= max_neighbors);
+                assert(nbr_cnt <= static_cast<size_t>(std::numeric_limits<unsigned short>::max()));
+                linklistsizeint *ll = get_linklist_at_level(internal_id, lev);
+                setListCount(ll, static_cast<unsigned short>(nbr_cnt));
+                tableint *data = (tableint *) (ll + 1);
+                for (size_t j = 0; j < nbr_cnt; ++j) {
+                    const labeltype nlab =
+                        static_cast<labeltype>((*nbr_labels)[j]);
+                    auto it = label_lookup_.find(nlab);
+                    assert(it != label_lookup_.end());
+                    const tableint nid = it->second;
+                    assert(nid != internal_id);
+                    assert(element_levels_[nid] >= lev);
+                    data[j] = nid;
+                }
+            }
+        }
+
+        cur_element_count = n;
+    }
+
 
     template<typename data_t>
     std::vector<data_t> getDataByLabel(labeltype label) const {
@@ -951,7 +1115,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
     * Adds point. Updates the point if it is already in the index.
     * If replacement of deleted elements is enabled: replaces previously deleted point if any, updating it with new point
     */
-    void addPoint(const void *data_point, labeltype label, bool replace_deleted = false) override {
+    void addPoint(const void *data_point, labeltype label, bool replace_deleted = false,
+                  void *callback_context = nullptr) override {
         if ((allow_replace_deleted_ == false) && (replace_deleted == true)) {
             throw std::runtime_error("Replacement of deleted elements is disabled in constructor");
         }
@@ -959,7 +1124,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // lock all operations with element by label
         std::unique_lock <std::mutex> lock_label(getLabelOpMutex(label));
         if (!replace_deleted) {
-            addPoint(data_point, label, -1);
+            addPoint(data_point, label, -1, callback_context);
             return;
         }
         // check if there is vacant place
@@ -975,7 +1140,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         // if there is no vacant place then add or update point
         // else add point to vacant place
         if (!is_vacant_place) {
-            addPoint(data_point, label, -1);
+            addPoint(data_point, label, -1, callback_context);
         } else {
             // we assume that there are no concurrent operations on deleted element
             labeltype label_replaced = getExternalLabel(internal_id_replaced);
@@ -987,12 +1152,18 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             lock_table.unlock();
 
             unmarkDeletedInternal(internal_id_replaced);
-            updatePoint(data_point, internal_id_replaced, 1.0);
+            updatePoint(data_point, internal_id_replaced, 1.0, callback_context);
+            if (add_point_update_callback_) {
+                add_point_update_callback_(label, internal_id_replaced, data_point,
+                                           gatherAllNeighborsForNode(internal_id_replaced),
+                                           callback_context);
+            }
         }
     }
 
 
-    void updatePoint(const void *dataPoint, tableint internalId, float updateNeighborProbability) {
+    void updatePoint(const void *dataPoint, tableint internalId, float updateNeighborProbability,
+                     void *callback_context = nullptr) {
         // update the feature vector associated with existing point with new vector
         memcpy(getDataByInternalId(internalId), dataPoint, data_size_);
 
@@ -1003,6 +1174,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             return;
 
         int elemLevel = element_levels_[internalId];
+        std::unordered_set<tableint> updated_neighbor_ids;
         std::uniform_real_distribution<float> distribution(0.0, 1.0);
         for (int layer = 0; layer <= elemLevel; layer++) {
             std::unordered_set<tableint> sCand;
@@ -1064,10 +1236,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         candidates.pop();
                     }
                 }
+                updated_neighbor_ids.insert(neigh);
             }
         }
 
-        repairConnectionsForUpdate(dataPoint, entryPointCopy, internalId, elemLevel, maxLevelCopy);
+        repairConnectionsForUpdate(dataPoint, entryPointCopy, internalId, elemLevel, maxLevelCopy,
+                                   &updated_neighbor_ids);
+        flushAddPointUpdateCallbackForNeighborIds(updated_neighbor_ids, callback_context);
     }
 
 
@@ -1076,7 +1251,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         tableint entryPointInternalId,
         tableint dataPointInternalId,
         int dataPointLevel,
-        int maxLevel) {
+        int maxLevel,
+        std::unordered_set<tableint> *out_updated_neighbor_ids = nullptr) {
         tableint currObj = entryPointInternalId;
         if (dataPointLevel < maxLevel) {
             dist_t curdist = fstdistfunc_(dataPoint, getDataByInternalId(currObj), dist_func_param_);
@@ -1133,7 +1309,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                         filteredTopCandidates.pop();
                 }
 
-                currObj = mutuallyConnectNewElement(dataPoint, dataPointInternalId, filteredTopCandidates, level, true);
+                currObj = mutuallyConnectNewElement(dataPoint, dataPointInternalId, filteredTopCandidates, level, true,
+                                                    out_updated_neighbor_ids);
             }
         }
     }
@@ -1149,8 +1326,37 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return result;
     }
 
+    NeighborLabelListsByLevel gatherAllNeighborsForNode(tableint internal_id) {
+        int top = element_levels_[internal_id];
+        NeighborLabelListsByLevel out;
+        out.resize(static_cast<size_t>(top) + 1);
+        for (int lev = 0; lev <= top; ++lev) {
+            std::vector<tableint> conns = getConnectionsWithLock(internal_id, lev);
+            NeighborLabelList labels;
+            labels.reserve(conns.size());
+            for (tableint nid : conns) {
+                labels.push_back(getExternalLabel(nid));
+            }
+            out[static_cast<size_t>(lev)] = std::move(labels);
+        }
+        return out;
+    }
 
-    tableint addPoint(const void *data_point, labeltype label, int level) {
+    void flushAddPointUpdateCallbackForNeighborIds(const std::unordered_set<tableint> &neighbor_ids,
+                                                   void *callback_context = nullptr) {
+        if (!add_point_update_callback_ || neighbor_ids.empty()) {
+            return;
+        }
+        for (tableint id : neighbor_ids) {
+            add_point_update_callback_(
+                getExternalLabel(id), id, getDataByInternalId(id), gatherAllNeighborsForNode(id),
+                callback_context);
+        }
+    }
+
+
+    tableint addPoint(const void *data_point, labeltype label, int level,
+                      void *callback_context = nullptr) {
         tableint cur_c = 0;
         {
             // Checking if the element with the same label already exists
@@ -1169,7 +1375,12 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                 if (isMarkedDeleted(existingInternalId)) {
                     unmarkDeletedInternal(existingInternalId);
                 }
-                updatePoint(data_point, existingInternalId, 1.0);
+                updatePoint(data_point, existingInternalId, 1.0, callback_context);
+                if (add_point_update_callback_) {
+                    add_point_update_callback_(label, existingInternalId, data_point,
+                                               gatherAllNeighborsForNode(existingInternalId),
+                                               callback_context);
+                }
 
                 return existingInternalId;
             }
@@ -1210,6 +1421,7 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             memset(linkLists_[cur_c], 0, size_links_per_element_ * curlevel + 1);
         }
 
+        std::unordered_set<tableint> mutual_connect_updated_neighbors;
         if ((signed)currObj != -1) {
             if (curlevel < maxlevelcopy) {
                 dist_t curdist = fstdistfunc_(data_point, getDataByInternalId(currObj), dist_func_param_);
@@ -1250,7 +1462,8 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
                     if (top_candidates.size() > ef_construction_)
                         top_candidates.pop();
                 }
-                currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, level, false);
+                currObj = mutuallyConnectNewElement(data_point, cur_c, top_candidates, level, false,
+                                                    &mutual_connect_updated_neighbors);
             }
         } else {
             // Do nothing for the first element
@@ -1262,6 +1475,16 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         if (curlevel > maxlevelcopy) {
             enterpoint_node_ = cur_c;
             maxlevel_ = curlevel;
+        }
+        lock_el.unlock();
+        if (templock.owns_lock()) {
+            templock.unlock();
+        }
+        flushAddPointUpdateCallbackForNeighborIds(mutual_connect_updated_neighbors,
+                                                  callback_context);
+        if (add_point_insert_callback_) {
+            add_point_insert_callback_(label, cur_c, data_point, gatherAllNeighborsForNode(cur_c),
+                                       callback_context);
         }
         return cur_c;
     }

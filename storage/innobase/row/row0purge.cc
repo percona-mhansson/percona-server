@@ -672,7 +672,7 @@ static inline void row_purge_remove_multi_sec_if_poss(purge_node_t *node,
       break;
     }
 
-    if (node->index->type != DICT_FTS) {
+    if (!(node->index->type & (DICT_FTS | DICT_VECTOR))) {
       if (node->index->is_multi_value()) {
         row_purge_remove_multi_sec_if_poss(node, heap, false);
       } else {
@@ -1279,6 +1279,10 @@ bool purge_node_t::validate_pcur() {
   }
 
   if (index->type == DICT_FTS) {
+    return (true);
+  }
+
+  if (index->type == DICT_VECTOR) {
     return (true);
   }
 

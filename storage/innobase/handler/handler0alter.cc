@@ -73,6 +73,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "dict0stats.h"
 #include "dict0stats_bg.h"
 #include "fsp0sysspace.h"
+#include "fts0fts.h"
 #include "fts0plugin.h"
 #include "fts0priv.h"
 #include "ha_innodb.h"
@@ -5135,6 +5136,11 @@ template <typename Table>
       if (error != DB_SUCCESS) {
         goto error_handling;
       }
+    }
+
+    error = vec_create_index_dd_tables(ctx->new_table);
+    if (error != DB_SUCCESS) {
+      goto error_handling;
     }
   }
 

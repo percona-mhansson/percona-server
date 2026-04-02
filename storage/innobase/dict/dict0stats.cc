@@ -170,7 +170,7 @@ typedef std::map<const char *, dict_index_t *, ut_strcmp_functor,
 static inline bool dict_stats_should_ignore_index(
     const dict_index_t *index) /*!< in: index */
 {
-  return ((index->type & DICT_FTS) || index->is_corrupted() ||
+  return ((index->type & (DICT_FTS | DICT_VECTOR)) || index->is_corrupted() ||
           dict_index_is_spatial(index) || index->to_be_dropped ||
           !index->is_committed());
 }
@@ -428,7 +428,7 @@ static void dict_stats_empty_table(dict_table_t *table) /*!< in/out: table */
   table->stat_modified_counter = 0;
 
   for (auto index : table->indexes) {
-    if (index->type & DICT_FTS) {
+    if (index->type & (DICT_FTS | DICT_VECTOR)) {
       continue;
     }
 
@@ -506,7 +506,7 @@ static void dict_stats_copy(dict_table_t *dst, /*!< in/out: destination table */
       src_idx = src_idx->next();
     }
     if (dict_stats_should_ignore_index(dst_idx)) {
-      if (!(dst_idx->type & DICT_FTS)) {
+      if (!(dst_idx->type & (DICT_FTS|DICT_VECTOR))) {
         dict_stats_empty_index(dst_idx);
       }
       continue;
@@ -879,7 +879,7 @@ static void dict_stats_update_transient(
   /* Now copy secondary index statistics. */
   auto stats_it = stats.begin();
   for (auto index : table->indexes) {
-    if (index->type & DICT_FTS || dict_index_is_spatial(index)) {
+    if ((index->type & (DICT_FTS|DICT_VECTOR)) || dict_index_is_spatial(index)) {
       continue;
     }
 
@@ -2321,7 +2321,7 @@ static dberr_t dict_stats_update_persistent(dict_table_t *table) {
   for (index = index->next(); index != nullptr; index = index->next()) {
     ut_ad(!dict_index_is_ibuf(index));
 
-    if (index->type & DICT_FTS || dict_index_is_spatial(index)) {
+    if ((index->type & (DICT_FTS|DICT_VECTOR)) || dict_index_is_spatial(index)) {
       continue;
     }
 

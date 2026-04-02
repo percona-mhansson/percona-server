@@ -2017,7 +2017,7 @@ loading the index definition */
     /* We check for unsupported types first, so that the
     subsequent checks are relevant for the supported types. */
     if (index->type & ~(DICT_CLUSTERED | DICT_UNIQUE | DICT_CORRUPT | DICT_FTS |
-                        DICT_SPATIAL | DICT_VIRTUAL)) {
+                        DICT_SPATIAL | DICT_VIRTUAL | DICT_VECTOR)) {
       ib::error(ER_IB_MSG_202) << "Unknown type " << index->type << " of index "
                                << index->name << " of table " << table->name;
 

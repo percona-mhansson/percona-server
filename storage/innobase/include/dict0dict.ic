@@ -293,6 +293,19 @@ static inline bool dict_table_has_fts_index(
   return (DICT_TF2_FLAG_IS_SET(table, DICT_TF2_FTS));
 }
 
+/** Check if the table has a VECTOR index. */
+static inline bool dict_table_has_vector_index(dict_table_t *table) {
+  ut_ad(table);
+
+  for (dict_index_t *index = table->first_index(); index != nullptr;
+       index = index->next()) {
+    if (index->type & DICT_VECTOR) {
+      return (true);
+    }
+  }
+  return (false);
+}
+
 /** Validate the table flags.
 @param[in]      flags   Table flags
 @return true if valid. */

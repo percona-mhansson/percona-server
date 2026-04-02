@@ -302,7 +302,7 @@ static ulint opt_calc_index_goodness(
 
   /* At least for now we don't support using FTS indexes, or
   virtual index for queries done through InnoDB's own SQL parser. */
-  if (dict_index_is_online_ddl(index) || (index->type & DICT_FTS) ||
+  if (dict_index_is_online_ddl(index) || (index->type & (DICT_FTS | DICT_VECTOR)) ||
       dict_index_has_virtual(index)) {
     return (0);
   }

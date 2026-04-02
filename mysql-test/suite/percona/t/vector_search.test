@@ -14,4 +14,13 @@ SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMI
 --replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
 EXPLAIN ANALYZE SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 
+--echo # Check that changes to index are persisted.
+
+--let $restart_parameters =
+--source include/restart_mysqld.inc
+
+SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
+--replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
+EXPLAIN ANALYZE SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
+
 DROP TABLE t1;

@@ -1393,6 +1393,14 @@ bool dd_create_fts_index_table(const dict_table_t *parent_table,
                                dict_table_t *table,
                                const CHARSET_INFO *charset);
 
+/** Create dd::Table metadata for vector-index auxiliary table
+(schema matches vec_create_index_table: id, layer, vec, neighbours).
+@param[in]      parent_table    base user table
+@param[in,out]  table           InnoDB dict_table_t for the *_vec aux table
+@return true on success, false on failure */
+bool dd_create_vector_index_aux_table(const dict_table_t *parent_table,
+                                      dict_table_t *table);
+
 /** Create dd table for fts aux common table
 @param[in]      parent_table    parent table of fts table
 @param[in,out]  table           fts table

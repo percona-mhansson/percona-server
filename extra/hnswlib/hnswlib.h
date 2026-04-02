@@ -193,7 +193,9 @@ class SpaceInterface {
 template<typename dist_t>
 class AlgorithmInterface {
  public:
-    virtual void addPoint(const void *datapoint, labeltype label, bool replace_deleted = false) = 0;
+    virtual void addPoint(const void *datapoint, labeltype label,
+                          bool replace_deleted = false,
+                          void *callback_context = nullptr) = 0;
 
     virtual std::priority_queue<std::pair<dist_t, labeltype>>
         searchKnn(const void*, size_t, BaseFilterFunctor* isIdAllowed = nullptr) const = 0;

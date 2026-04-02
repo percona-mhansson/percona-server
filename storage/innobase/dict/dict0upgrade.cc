@@ -514,6 +514,8 @@ static bool dd_upgrade_match_index(TABLE *srv_table, dict_index_t *index) {
     ind_type |= DICT_FTS;
   }
 
+  ut_ad(!(key->flags & HA_VECTOR));
+
   ulint nulls_equal = (key->flags & HA_NULL_ARE_EQUAL) ? true : false;
 
   DBUG_EXECUTE_IF("dd_upgrade_strict_mode",
@@ -570,7 +572,7 @@ static bool dd_upgrade_match_index(TABLE *srv_table, dict_index_t *index) {
       prefix_len = 0;
     }
 
-    if (!(index->type & (DICT_FTS | DICT_SPATIAL))) {
+    if (!(index->type & (DICT_FTS | DICT_SPATIAL | DICT_VECTOR))) {
       if (prefix_len != index->get_field(i)->prefix_len) {
         ib::error(ER_IB_MSG_251)
             << "In Index: " << index->name

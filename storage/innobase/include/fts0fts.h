@@ -34,6 +34,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #ifndef fts0fts_h
 #define fts0fts_h
 
+#include <cstddef>
+#include <cstdint>
+#include <tuple>
+#include <vector>
+
 #include "ha_prototypes.h"
 
 #include "data0type.h"
@@ -550,6 +555,73 @@ CREATE TABLE $FTS_PREFIX_INDEX_[1-6](
                                                   dict_index_t *index,
                                                   const char *table_name,
                                                   table_id_t table_id);
+[[nodiscard]] dberr_t vec_create_index_tables_low(trx_t *trx,
+                                                  dict_index_t *index,
+                                                  const char *table_name,
+                                                  table_id_t table_id);
+
+/** Insert one row into the vector-index auxiliary table created by
+vec_create_index_table (columns: id, layer, vec, neighbours), using the
+internal SQL parser (same pattern as fts_sync_add_deleted_cache).
+
+The auxiliary table name is parent_table->name + "_vec".
+
+neighbors_by_level must match the layout of
+hnswlib::HierarchicalNSW<float>::NeighborLabelListsByLevel: outer index is
+level, inner vector is neighbor labels at that level.
+
+The neighbours BLOB format is: ulint nlevels (big-endian 4 bytes), then for
+each level: ulint count (BE 4 bytes), then count × uint64 labels (big-endian
+8 bytes each).
+
+@param[in,out]  trx                 transaction
+@param[in]      parent_table        base user table (not the aux table)
+@param[in]      node_id             node id (hnsw label)
+@param[in]      node_layer          layer value stored in the row
+@param[in]      vec                 raw vector bytes (e.g. sizeof(float)×dim)
+@param[in]      vec_len             byte length of vec
+@param[in]      neighbors_by_level  neighbor labels per level (same as
+                                    hnswlib::HierarchicalNSW<float>::NeighborLabelListsByLevel)
+@return DB_SUCCESS or error code */
+[[nodiscard]] dberr_t vec_aux_table_insert_row_parsed(
+    trx_t *trx, const dict_table_t *parent_table, std::uint64_t node_id,
+    std::uint64_t node_layer, const byte *vec, ulint vec_len,
+    const std::vector<std::vector<std::size_t>> &neighbors_by_level);
+
+/** Update only the neighbours BLOB for the row with the given id in the
+vector-index auxiliary table (same table and BLOB format as
+vec_aux_table_insert_row_parsed).
+
+@param[in,out]  trx                 transaction
+@param[in]      parent_table        base user table (not the aux table)
+@param[in]      node_id             clustered PK id (hnsw label)
+@param[in]      neighbors_by_level  new neighbor labels per level
+@return DB_SUCCESS if evaluation succeeds (including no matching row or
+no-op update when neighbours are unchanged), or another dberr_t on failure */
+[[nodiscard]] dberr_t vec_aux_table_update_row_parsed(
+    trx_t *trx, const dict_table_t *parent_table, std::uint64_t node_id,
+    const std::vector<std::vector<std::size_t>> &neighbors_by_level);
+
+/** One row from the vector auxiliary table (inverse of
+vec_aux_table_insert_row_parsed): (label_id, layer, vector,
+neighbors_by_level). */
+using vec_aux_loaded_row_t =
+    std::tuple<std::uint64_t, std::uint64_t, std::vector<float>,
+               std::vector<std::vector<std::size_t>>>;
+
+/** Load all rows from the vector-index auxiliary table (SELECT … full scan)
+using the internal SQL parser / cursor pattern (see fts_doc_fetch_by_doc_id).
+
+Requires vec and neighbours BLOBs to be stored inline in the clustered record
+(not externally stored); otherwise debug builds will assert.
+
+@param[in,out]  trx             transaction
+@param[in]      parent_table    base user table (not the aux table)
+@param[out]     out_rows        cleared then filled with one entry per row
+@return DB_SUCCESS, DB_CORRUPTION on bad neighbour encoding, or other eval error */
+[[nodiscard]] dberr_t vec_aux_table_load_all_parsed(
+    trx_t *trx, const dict_table_t *parent_table,
+    std::vector<vec_aux_loaded_row_t> *out_rows);
 
 /** Add the FTS document id hidden column.
 @param[in,out] table Table with FTS index
@@ -571,6 +643,34 @@ dberr_t fts_drop_tables(trx_t *trx, dict_table_t *table,
 @param[in]      table   table has the fts index
 @return DB_SUCCESS or error code */
 dberr_t fts_lock_all_aux_tables(THD *thd, dict_table_t *table);
+
+/** Exclusive MDL on the vector-index auxiliary table (parent_name + "_vec").
+@param[in]      thd             thread
+@param[in]      parent_table    base user table
+@return DB_SUCCESS or error code */
+[[nodiscard]] dberr_t vec_lock_aux_table(THD *thd,
+                                         const dict_table_t *parent_table);
+
+/** Drop the vector-index auxiliary table for a parent table.
+Uses fts_drop_table() on the $parent_vec name; row_mysql_lock_data_dictionary
+must be held.
+@param[in,out]  trx             transaction
+@param[in]      parent_table    base user table
+@param[in,out]  aux_vec         collects dropped table names for DD cleanup
+@return DB_SUCCESS, DB_FAIL if aux missing, or error */
+[[nodiscard]] dberr_t vec_drop_aux_table(trx_t *trx,
+                                         const dict_table_t *parent_table,
+                                         aux_name_vec_t *aux_vec);
+
+/** Drop one auxiliary table by full InnoDB internal name (FTS aux or
+vector ..._vec). row_mysql_lock_data_dictionary must be held.
+@param[in,out]  trx             transaction
+@param[in]      table_name      full name e.g. "db/table_vec"
+@param[in,out]  aux_vec         if non-null, push name for fts_drop_dd_tables;
+                                if null, remove DD immediately
+@return DB_SUCCESS, DB_FAIL if table not found, or error */
+[[nodiscard]] dberr_t fts_drop_table(trx_t *trx, const char *table_name,
+                                     aux_name_vec_t *aux_vec);
 
 /** Drop FTS AUX table DD table objects in vector
 @param[in]      aux_vec         aux table name vector
@@ -949,6 +1049,12 @@ tables' metadata updated in DD
 @param[in,out]  table           table to check
 @return DB_SUCCESS or error code */
 dberr_t fts_create_index_dd_tables(dict_table_t *table);
+
+/** Register vector-index auxiliary table(s) in the global DD
+(same naming as vec_create_index_table: parent_name + "_vec").
+@param[in,out]  table           base table with possible DICT_VECTOR indexes
+@return DB_SUCCESS or error */
+dberr_t vec_create_index_dd_tables(dict_table_t *table);
 
 /** Upgrade FTS AUX Tables. The FTS common and aux tables are
 renamed because they have table_id in their name. We move table_ids

@@ -607,6 +607,10 @@ static inline void dict_table_x_unlock_indexes(
  @return true if table has an FTS index */
 [[nodiscard]] static inline bool dict_table_has_fts_index(
     dict_table_t *table); /*!< in: table */
+/** Check if the table has a VECTOR index.
+ @return true if table has a vector index */
+[[nodiscard]] static inline bool dict_table_has_vector_index(
+    dict_table_t *table); /*!< in: table */
 #ifdef UNIV_DEBUG
 /** Validate no active background threads to cause purge or rollback
  operations. */

@@ -61,7 +61,9 @@ class BruteforceSearch : public AlgorithmInterface<dist_t> {
     }
 
 
-    void addPoint(const void *datapoint, labeltype label, bool replace_deleted = false) {
+    void addPoint(const void *datapoint, labeltype label, bool replace_deleted = false,
+                  void *callback_context = nullptr) override {
+        (void)callback_context;
         int idx;
         {
             std::unique_lock<std::mutex> lock(index_lock);

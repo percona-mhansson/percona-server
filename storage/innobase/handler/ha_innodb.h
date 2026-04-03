@@ -787,7 +787,11 @@ class ha_innobase : public handler {
   bool m_mysql_has_locked;
 
   std::vector<std::pair<float, hnswlib::labeltype>> m_closest;
+  std::unordered_set<hnswlib::labeltype> m_closest_returned;
   size_t m_closest_idx{0};
+  size_t m_saved_limit{0};
+  hnswlib::HierarchicalNSW<float> *m_saved_hnsw{nullptr};
+  String m_saved_vec;
 
   /** Get the table stats.
   @param[in]  flag       flag indicating which statistics to return

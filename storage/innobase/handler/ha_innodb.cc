@@ -11143,6 +11143,8 @@ int ha_innobase::index_end(void) {
   m_ds_mrr.dsmrr_close();
 
   m_closest.clear();
+  m_closest_returned.clear();
+  m_saved_hnsw = nullptr;
 
   return 0;
 }
@@ -12367,17 +12369,53 @@ int ha_innobase::vec_read_first(Item *item, uchar *buf, ha_rows limit)
     return (HA_ERR_END_OF_FILE);
   }
 
-  // FIXME: we need to take filtering into account.
   m_closest = hnsw->searchKnnCloserFirst(vec->ptr(), limit);
   m_closest_idx = 0;
+
+  // Save search parameters to be able to resume search.
+  m_saved_limit = limit;
+  m_saved_vec.copy(*vec);
+  m_saved_hnsw = hnsw;
+  m_closest_returned.clear();
 
   return vec_read_next(buf);
 }
 
+class HNSW_returned_filter : public hnswlib::BaseFilterFunctor {
+  public:
+    HNSW_returned_filter(std::unordered_set<hnswlib::labeltype> &returned) : m_returned(returned) {}
+
+    bool operator()(hnswlib::labeltype id) override { return m_returned.find(id) == m_returned.end(); }
+
+  private:
+    std::unordered_set<hnswlib::labeltype> &m_returned;
+};
+
 int ha_innobase::vec_read_next(uchar *buf)
 {
   if (m_closest_idx >= m_closest.size())
-    return (HA_ERR_END_OF_FILE);
+  {
+    // Handle the case when no neighbours are left!
+    if (m_closest.size() < m_saved_limit)
+      return (HA_ERR_END_OF_FILE);
+
+    // There might be more neighbours. Let us find them!
+    //
+    // But let us save those which we have returned already, to be
+    // able to exclude them in new search.
+    //
+    // TODO: This is horrible implementation of resumable search.
+    //       We just want to have it working for prototype.
+    for (auto it : m_closest) m_closest_returned.insert(it.second);
+
+    HNSW_returned_filter returned_filter(m_closest_returned);
+
+    m_closest = m_saved_hnsw->searchKnnCloserFirst(m_saved_vec.ptr(), m_saved_limit, &returned_filter);
+    m_closest_idx = 0;
+
+    if (m_closest.size() == 0)
+      return (HA_ERR_END_OF_FILE);
+  }
 
   doc_id_t id = m_closest[m_closest_idx].second;
   ++m_closest_idx;

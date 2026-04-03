@@ -37,3 +37,44 @@ EXPLAIN
     -> Vector index search on t1 using v  (cost=0.35 rows=1) (actual time=X..Y rows=3 loops=1)
 
 DROP TABLE t1;
+# Test that filtering works correctly with vector search.
+# I.e. that ORDER BY distance LIMIT n returns enough rows
+# even if some rows returned by vector index are filtered
+# out by WHERE clause.
+CREATE TABLE t2 (id BIGINT UNSIGNED PRIMARY KEY, v VECTOR(2), flag BOOL, VECTOR KEY(v));
+INSERT INTO t2 VALUES (1, TO_VECTOR("[0, 0]"), 0);
+INSERT INTO t2 VALUES (2, TO_VECTOR("[1, 0]"), 1);
+INSERT INTO t2 VALUES (3, TO_VECTOR("[0, 2]"), 1);
+INSERT INTO t2 VALUES (4, TO_VECTOR("[3, 0]"), 0);
+INSERT INTO t2 VALUES (5, TO_VECTOR("[0, 4]"), 0);
+INSERT INTO t2 VALUES (6, TO_VECTOR("[5, 0]"), 1);
+INSERT INTO t2 VALUES (7, TO_VECTOR("[0, 6]"), 1);
+INSERT INTO t2 VALUES (8, TO_VECTOR("[7, 0]"), 0);
+INSERT INTO t2 VALUES (9, TO_VECTOR("[0, 8]"), 0);
+INSERT INTO t2 VALUES (10, TO_VECTOR("[9, 0]"), 1);
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+id
+2
+3
+6
+EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+EXPLAIN
+-> Limit: 3 row(s)  (cost=1.25 rows=1) (actual time=X..Y rows=3 loops=1)
+    -> Filter: (t2.flag = 1)  (cost=1.25 rows=1) (actual time=X..Y rows=3 loops=1)
+        -> Vector index search on t2 using v  (cost=1.25 rows=1) (actual time=X..Y rows=6 loops=1)
+
+# Case when vector search runs out of entries to return.
+SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
+id
+1
+4
+5
+8
+9
+EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
+EXPLAIN
+-> Limit: 6 row(s)  (cost=1.25 rows=1) (actual time=X..Y rows=5 loops=1)
+    -> Filter: (t2.flag = 0)  (cost=1.25 rows=1) (actual time=X..Y rows=5 loops=1)
+        -> Vector index search on t2 using v  (cost=1.25 rows=1) (actual time=X..Y rows=10 loops=1)
+
+DROP TABLE t2;

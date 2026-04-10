@@ -5212,7 +5212,7 @@ static bool prepare_key_column(THD *thd, HA_CREATE_INFO *create_info,
       my_error(ER_UNKNOWN_ERROR, MYF(0));
       return true;
     }
-    column_length = 1;  // Dummy value.
+    column_length = 0; // Dummy value.
   } else {
     switch (sql_field->sql_type) {
       case MYSQL_TYPE_GEOMETRY:

@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cmath>
 
 #include "my_base.h"  // key_part_map
 #include "my_bitmap.h"
@@ -227,7 +228,7 @@ Key_use *Optimize_table_order::find_best_ref(
   double best_ref_cost = DBL_MAX;
 
   // Index type, note that code below relies on this element definition order
-  enum idx_type { CLUSTERED_PK, UNIQUE, NOT_UNIQUE, FULLTEXT };
+  enum idx_type { CLUSTERED_PK, UNIQUE, NOT_UNIQUE, FULLTEXT, VECTOR };
   enum idx_type best_found_keytype = NOT_UNIQUE;
 
   TABLE *const table = tab->table();
@@ -276,7 +277,9 @@ Key_use *Optimize_table_order::find_best_ref(
     Opt_trace_object trace_access_idx(trace);
 
     enum idx_type cur_keytype =
-        (keyuse->keypart == FT_KEYPART) ? FULLTEXT : NOT_UNIQUE;
+        (keyuse->keypart == FT_KEYPART)
+            ? FULLTEXT
+            : (keyuse->keypart == VEC_KEYPART ? VECTOR : NOT_UNIQUE);
 
     // Calculate how many key segments of the current key we can use
     Key_use *const start_key = keyuse;
@@ -336,7 +339,7 @@ Key_use *Optimize_table_order::find_best_ref(
           const_part |= keyuse->keypart_map;
         }
         found_part |= keyuse->keypart_map;
-        if (keypart != FT_KEYPART) {
+        if (keypart != FT_KEYPART && keypart != VEC_KEYPART) {
           const bool keyinfo_maybe_null =
               keyinfo->key_part[keypart].field->is_nullable() ||
               tab->table()->is_nullable();
@@ -375,7 +378,7 @@ Key_use *Optimize_table_order::find_best_ref(
     }
 
     // fulltext indexes require special treatment
-    if (cur_keytype != FULLTEXT) {
+    if (cur_keytype != FULLTEXT && cur_keytype != VECTOR) {
       *found_condition |= (0 != found_part);
 
       const bool all_key_parts_covered =
@@ -668,7 +671,7 @@ Key_use *Optimize_table_order::find_best_ref(
         trace_access_idx.add("usable", false).add("chosen", false);
         continue;
       }
-    } else {
+    } else if (cur_keytype == FULLTEXT) {
       // This is a full-text index
 
       trace_access_idx.add_alnum("access_type", "fulltext")
@@ -684,6 +687,38 @@ Key_use *Optimize_table_order::find_best_ref(
       cur_read_cost = prev_record_reads(join, idx, table_deps) *
                       table->cost_model()->page_read_cost(1.0);
       cur_fanout = 1.0;
+    } else {
+      // This is a vector index
+      assert(cur_keytype == VECTOR);
+
+      trace_access_idx.add_alnum("access_type", "vector")
+          .add_utf8("index", keyinfo->name);
+/*
+      if (best_found_keytype < NOT_UNIQUE) {
+        trace_access_idx.add("chosen", false)
+            .add_alnum("cause", "heuristic_eqref_already_found");
+        continue;
+      }
+*/
+      // Estimate cost of vector ANN search.
+      // The search returns up to LIMIT rows via HNSW traversal.
+      // Cost model: HNSW search is ~O(log(N)) per result row, plus
+      // a PK lookup per result row to fetch the full record.
+      ha_rows table_rows = tab->records();
+      // Use the query's LIMIT as the K for KNN search; default to
+      // a reasonable number if no LIMIT.
+      ha_rows vec_k = join->m_select_limit;
+      if (vec_k == 0 || vec_k == HA_POS_ERROR) vec_k = 10;
+      double k = static_cast<double>(std::min(vec_k, table_rows));
+
+      // HNSW search cost: ~log2(N) comparisons per result, each comparison
+      // roughly equivalent to one page read.
+      double log_n = std::max(1.0, std::log2(static_cast<double>(
+                                       std::max(table_rows, ha_rows{1}))));
+      Cost_estimate vec_cost =
+          table->file->read_cost(key, 1, k * log_n);
+      cur_read_cost = prefix_rowcount * vec_cost.total_cost();
+      cur_fanout = k;
     }
 
     start_key->bound_keyparts = found_part;

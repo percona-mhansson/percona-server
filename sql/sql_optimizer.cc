@@ -942,6 +942,8 @@ bool JOIN::optimize(bool finalize_access_paths) {
       if (tab->use_join_cache() != JOIN_CACHE::ALG_NONE) simple_sort = false;
       assert(tab->type() != JT_FT ||
              tab->use_join_cache() == JOIN_CACHE::ALG_NONE);
+      assert(tab->type() != JT_VECTOR ||
+             tab->use_join_cache() == JOIN_CACHE::ALG_NONE);
       if (has_lateral && get_lateral_deps(*best_ref[i]) != 0) {
         deps_of_remaining_lateral_derived_tables =
             calculate_deps_of_remaining_lateral_derived_tables(all_table_map,
@@ -2321,10 +2323,10 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
       }
     }
 
-    if (order.order != nullptr && order.order->next == nullptr &&
+    if (tab->type() == JT_VECTOR &&
+        order.order != nullptr && order.order->next == nullptr &&
         order.order->direction != ORDER_DESC &&
         is_function_of_type(*order.order->item, Item_func::VEC_DISTANCE_FUNC) &&
-        tab->table()->key_info[tab->ref().key].algorithm == HA_KEY_ALG_VECTOR &&
         select_limit != HA_POS_ERROR) {
       return true;
     }
@@ -2346,7 +2348,9 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
         down_cast<const Item_field *>(item)->field->part_of_sortkey);
     if (usable_keys.is_clear_all()) return false;  // No usable keys
   }
-  if (tab->type() == JT_REF_OR_NULL || tab->type() == JT_FT) return false;
+  if (tab->type() == JT_REF_OR_NULL || tab->type() == JT_FT ||
+      tab->type() == JT_VECTOR)
+    return false;
 
   ref_key = -1;
   /* Test if constant range in WHERE */
@@ -8021,6 +8025,73 @@ static bool add_ft_keys(Key_use_array *keyuse_array, Item *cond,
 }
 
 /**
+  Add vector distance function candidates to Key_use array.
+
+  For each distance() function registered in the query block's
+  vector_func_list, this creates a Key_use entry pointing to the
+  matching HA_VECTOR index. This allows the cost-based optimizer in
+  find_best_ref() to evaluate the vector index alongside other access
+  methods.
+
+  @param keyuse_array  Append key use info here
+  @param query_block   The query block containing vector functions
+  @param usable_tables Bitmask of tables available for key use
+
+  @returns false if success, true if error
+*/
+static bool add_vector_keys(Key_use_array *keyuse_array,
+                            Query_block *query_block,
+                            table_map usable_tables) {
+  if (!query_block->has_vector_funcs()) return false;
+
+  for (auto &dist_fn : *query_block->vector_func_list) {
+    Item *arg1 = dist_fn.arguments()[0]->real_item();
+    Item *arg2 = dist_fn.arguments()[1]->real_item();
+
+    Item *const_vector_expr;
+    Item_field *vector_field_item;
+    if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
+      vector_field_item = down_cast<Item_field *>(arg1);
+      const_vector_expr = arg2;
+    } else if (arg2->type() == Item::FIELD_ITEM &&
+               arg1->const_for_execution()) {
+      vector_field_item = down_cast<Item_field *>(arg2);
+      const_vector_expr = arg1;
+    } else {
+      continue;
+    }
+
+    const Field *vector_column = vector_field_item->field;
+    if (vector_column->type() != MYSQL_TYPE_VECTOR) continue;
+
+    Table_ref *tbl = vector_field_item->m_table_ref;
+    if (!(usable_tables & tbl->map())) continue;
+
+    TABLE *table = tbl->table;
+    for (uint idx = 0; idx < table->s->keys; idx++) {
+      const KEY &key_info = table->key_info[idx];
+      if (!(key_info.flags & HA_VECTOR)) continue;
+      if (!table->keys_in_use_for_query.is_set(idx)) continue;
+      if (key_info.key_part[0].field != vector_column) continue;
+
+      // Found a matching vector index. Create a Key_use entry.
+      const Key_use keyuse(tbl, const_vector_expr,
+                           const_vector_expr->used_tables(),
+                           idx, VEC_KEYPART,
+                           0,            // optimize
+                           0,            // keypart_map
+                           ~(ha_rows)0,  // ref_table_rows
+                           false,        // null_rejecting
+                           nullptr,      // cond_guard
+                           UINT_MAX);    // sj_pred_no
+      table->reginfo.join_tab->keys().set_bit(idx);
+      if (keyuse_array->push_back(keyuse)) return true;
+    }
+  }
+  return false;
+}
+
+/**
   Compares two keyuse elements.
 
   @param a first Key_use element
@@ -8507,6 +8578,10 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
     if (add_ft_keys(keyuse, cond, normal_tables, true)) return true;
   }
 
+  if (query_block->has_vector_funcs()) {
+    if (add_vector_keys(keyuse, query_block, normal_tables)) return true;
+  }
+
   /*
     Sort the array of possible keys and remove the following key parts:
     - ref if there is a keypart which is a ref and a const.
@@ -8536,7 +8611,7 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
       if (use->val->const_for_execution() &&
           use->optimize != KEY_OPTIMIZE_REF_OR_NULL)
         table->const_key_parts[use->key] |= use->keypart_map;
-      if (use->keypart != FT_KEYPART) {
+      if (use->keypart != FT_KEYPART && use->keypart != VEC_KEYPART) {
         if (use->key == prev->key && use->table_ref == prev->table_ref) {
           if (prev->keypart + 1 < use->keypart ||
               (prev->keypart == use->keypart && found_eq_constant))
@@ -11023,48 +11098,19 @@ bool JOIN::optimize_vector_query() {
   // Only used by the old optimizer.
   assert(!thd->lex->using_hypergraph_optimizer());
 
-  for (const auto &dist_fn_expr : *query_block->vector_func_list) {
-    const auto arg1 = dist_fn_expr.arguments()[0]->real_item();
-    const auto arg2 = dist_fn_expr.arguments()[1]->real_item();
+  // Post-process vector index tabs that were chosen by the cost-based
+  // optimizer (via find_best_ref/create_ref_for_key). Set the KNN limit
+  // based on the query's SELECT LIMIT.
+  for (uint i = const_tables; i < tables; i++) {
+    JOIN_TAB *tab = best_ref[i];
+    if (tab->type() != JT_VECTOR) continue;
 
-    Item *const_vector_expr;
-    const Field *vector_column;
-    if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
-      vector_column = down_cast<const Item_field *>(arg1)->field;
-      const_vector_expr = arg2;
-    } else if (arg2->type() == Item::FIELD_ITEM &&
-               arg1->const_for_execution()) {
-      vector_column = down_cast<const Item_field *>(arg2)->field;
-      const_vector_expr = arg1;
-    } else {
-      return false;
-    }
-
-    assert(vector_column->type() == MYSQL_TYPE_VECTOR);
-
-    const auto activate_index = [vector_column,
-                                 const_vector_expr](JOIN_TAB *tab) {
-      if (const auto table = tab->table(); table != nullptr) {
-        for (uint idx{0}; idx < table->s->keys; ++idx) {
-          const auto &index = table->key_info[idx];
-          if (index.flags & HA_VECTOR &&
-              table->keys_in_use_for_query.is_set(idx) &&
-              index.key_part[0].field == vector_column) {
-            tab->set_type(JT_VECTOR);
-            tab->ref().key = idx;
-            tab->ref().key_parts = 0;
-            tab->set_index(idx);
-            tab->set_vec(const_vector_expr);
-            return true;
-          }
-        }
-      }
-      return false;
-    };
-
-    std::find_if(best_ref + const_tables, best_ref + primary_tables,
-                 activate_index);
+    // Set the KNN limit for the vector search.
+    ha_rows vec_k = m_select_limit;
+    if (vec_k == 0 || vec_k == HA_POS_ERROR) vec_k = 10;
+    tab->set_vec_limit(vec_k);
   }
+
   return false;
 }
 

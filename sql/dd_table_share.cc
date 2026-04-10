@@ -398,7 +398,8 @@ static bool prepare_share(THD *thd, TABLE_SHARE *share,
         }
         if (field->type() == MYSQL_TYPE_BLOB ||
             field->real_type() == MYSQL_TYPE_VARCHAR ||
-            field->type() == MYSQL_TYPE_GEOMETRY) {
+            field->type() == MYSQL_TYPE_GEOMETRY ||
+            field->type() == MYSQL_TYPE_VECTOR) {
           key_part->store_length += HA_KEY_BLOB_LENGTH;
           if (i + 1 <= keyinfo->user_defined_key_parts)
             keyinfo->key_length += HA_KEY_BLOB_LENGTH;

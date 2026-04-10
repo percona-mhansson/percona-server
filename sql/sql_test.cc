@@ -175,13 +175,14 @@ void print_keyuse_array(THD *thd, Opt_trace_context *trace,
 
     Opt_trace_object(trace)
         .add_utf8_table(keyuse.table_ref)
-        .add_utf8("field",
-                  (keyuse.keypart == FT_KEYPART)
-                      ? "<fulltext>"
-                      : get_field_name_or_expression(
-                            thd, keyuse.table_ref->table->key_info[keyuse.key]
-                                     .key_part[keyuse.keypart]
-                                     .field))
+        .add_utf8(
+            "field",
+            (keyuse.keypart == FT_KEYPART || keyuse.keypart == VEC_KEYPART)
+                ? "<fulltext>"
+                : get_field_name_or_expression(
+                      thd, keyuse.table_ref->table->key_info[keyuse.key]
+                               .key_part[keyuse.keypart]
+                               .field))
         .add("equals", keyuse.val)
         .add("null_rejecting", keyuse.null_rejecting);
   }

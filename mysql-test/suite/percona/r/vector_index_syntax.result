@@ -1,0 +1,94 @@
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : 6 }'
+);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` bigint unsigned NOT NULL,
+  `v1` vector(1234) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  VECTOR KEY `v1` (`v1`) /*!80021 SECONDARY_ENGINE_ATTRIBUTE '{"M": 6, "type": "hnsw"}' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+SHOW INDEXES FROM t1;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL
+t1	1	v1	1	v1	A	0	1	NULL	YES	VECTOR			YES	NULL
+DROP TABLE t1;
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 )
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: type" at pos 1: '#'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : "6" }'
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: type" at pos 3: '#/M'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : 6.0 }'
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: type" at pos 3: '#/M'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : [] }'
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: type" at pos 3: '#/M'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "no such" : "key" }'
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: additionalProperties" at pos 11: '#/no%20such'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 ),
+VECTOR KEY( v1 ) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : 6, "no such" : "key" }'
+);
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: additionalProperties" at pos 11: '#/no%20such'
+CREATE TABLE t1 (
+id BIGINT UNSIGNED PRIMARY KEY,
+v1 VECTOR( 1234 )
+);
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` bigint unsigned NOT NULL,
+  `v1` vector(1234) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+CREATE VECTOR INDEX idx_v1 ON t1 (v1) SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : "6" }';
+ERROR HY000: Invalid json attribute, error: "Validation failed for vector index options: type" at pos 3: '#/M'
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` bigint unsigned NOT NULL,
+  `v1` vector(1234) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+SHOW INDEXES FROM t1;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL
+CREATE VECTOR INDEX idx_v1 ON t1 (v1)
+SECONDARY_ENGINE_ATTRIBUTE '{ "type" : "hnsw", "M" : 1, "ef_construction" : 2, "max_elements" : 3 }';
+SHOW CREATE TABLE t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` bigint unsigned NOT NULL,
+  `v1` vector(1234) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  VECTOR KEY `idx_v1` (`v1`) /*!80021 SECONDARY_ENGINE_ATTRIBUTE '{"M": 1, "type": "hnsw", "max_elements": 3, "ef_construction": 2}' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+SHOW INDEXES FROM t1;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL
+t1	1	idx_v1	1	v1	A	0	1	NULL	YES	VECTOR			YES	NULL
+ALTER TABLE t1 DROP PRIMARY KEY;
+ERROR HY000: Vector index can only be created in tables with a BIGINT UNSIGNED primary key.
+DROP TABLE t1;

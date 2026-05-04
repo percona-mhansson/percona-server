@@ -20638,6 +20638,11 @@ static bool check_engine(THD *thd, const char *db_name, const char *table_name,
     }
   }
 
+  if (auto vea = (*new_engine)->validate_engine_attributes;
+      vea != nullptr && vea(thd, db_name, create_info, alter_info)) {
+    return true;
+  }
+
   return false;
 }
 

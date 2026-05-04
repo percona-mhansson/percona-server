@@ -1,3 +1,5 @@
+// clang-format off
+
 /*****************************************************************************
 
 Copyright (c) 2000, 2025, Oracle and/or its affiliates.
@@ -43,6 +45,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 /** @file ha_innodb.cc */
 
+#include <variant>
 #ifndef UNIV_HOTBACKUP
 #include "my_config.h"
 #endif /* !UNIV_HOTBACKUP */
@@ -208,6 +211,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "sql-common/json_binary.h"
 #include "sql-common/json_dom.h"
+
+#include "vec0vec.h"
 
 #include "os0enc.h"
 #include "os0file.h"
@@ -4848,6 +4853,29 @@ static bool innobase_redo_set_state(THD *thd, bool enable) {
   return (false);
 }
 
+// clang-format on
+
+static bool innobase_validate_engine_attributes(THD *thd, const char *db_name,
+                                                HA_CREATE_INFO *create_info,
+                                                const Alter_info *alter_info) {
+  for (const auto *key : alter_info->key_list) {
+    auto opts =
+        to_string_view(key->key_create_info.m_secondary_engine_attribute);
+    switch (key->type) {
+      case KEYTYPE_VECTOR:
+        return storage::innobase::vec0vec::validate_options(opts);
+        break;
+      default:
+        break;
+    }
+  }
+
+  return false;
+}
+
+// clang-format off
+
+
 /** Return partitioning flags. */
 static uint innobase_partition_flags() {
   return (HA_CAN_EXCHANGE_PARTITION | HA_CANNOT_PARTITION_FK |
@@ -5736,8 +5764,6 @@ static PSI_metric_info_v1 data_metrics[] = {
      export_vars.innodb_data_written)
 };
 
-// clang-format on
-
 static PSI_meter_info_v1 inno_meter[] = {
     {"mysql.inno", "MySql InnoDB metrics", 10, 0, 0, inno_metrics,
      std::size(inno_metrics)},
@@ -5865,6 +5891,7 @@ static int innodb_init(void *p) {
       innobase_fix_default_table_encryption;
 
   innobase_hton->redo_log_set_state = innobase_redo_set_state;
+  innobase_hton->validate_engine_attributes = innobase_validate_engine_attributes;
 
   innobase_hton->post_ddl = innobase_post_ddl;
 
@@ -8409,6 +8436,9 @@ int ha_innobase::open(const char *name, int, uint open_flags,
 
       DBUG_EXECUTE_IF("fts_instrument_use_default_parser",
                       index->parser = &fts_default_parser;);
+
+      // clang-format on
+
     } else if (table->key_info[i].flags & HA_VECTOR) {
       // Create HNSW for this vector index if there is not one already.
       std::lock_guard<std::mutex> guard(vector_indexes_lock);
@@ -8417,8 +8447,26 @@ int ha_innobase::open(const char *name, int, uint open_flags,
         auto space = new hnswlib::L2Space(
             static_cast<Field_vector *>(table->key_info[i].key_part[0].field)
                 ->get_max_dimensions());
+
+        auto index_param = storage::innobase::vec0vec::parse_options(
+            to_string_view(table->key_info[i].secondary_engine_attribute));
+
+        // since there's only HNSW for now.
+        auto hnsw_param =
+            std::get_if<storage::innobase::vec0vec::HnswParam>(&index_param);
+
+        if (hnsw_param == nullptr) {
+          ib::warn(ER_IB_MSG_466)
+              << "Invalid vector index options for index "
+              << table->key_info[i].name << ". Index was not created.";
+        }
+        continue;
+
         auto hnsw = new hnswlib::HierarchicalNSW<float>(
-            space, 10000 /* max rows! */, 25, 200);
+            space, hnsw_param->max_elements /* max rows! */, hnsw_param->M,
+            200);
+
+        // clang-format off
 
         trx_t *vec_load_trx = trx_allocate_for_background();
         vec_load_trx->op_info = "loading vector aux table rows";

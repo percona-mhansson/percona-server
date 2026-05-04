@@ -3262,6 +3262,27 @@ static void store_key_options(THD *thd, String *packet, TABLE *table,
       end = longlong10_to_str(key_info->block_size, buff, 10);
       packet->append(buff, (uint)(end - buff));
     }
+
+    if (key_info->vector_index_type.length > 0) {
+      packet->append(STRING_WITH_LEN(" TYPE "));
+      append_identifier(thd, packet, key_info->vector_index_type.str,
+                        key_info->vector_index_type.length);
+    }
+
+    if (key_info->vector_construction_params != nullptr &&
+        key_info->vector_construction_params->size() > 0) {
+      packet->append(STRING_WITH_LEN(" WITH ("));
+      for (size_t i = 0; i < key_info->vector_construction_params->size();
+           i++) {
+        if (i > 0) packet->append(STRING_WITH_LEN(", "));
+        const auto &[k, v] = (*key_info->vector_construction_params)[i];
+        append_identifier(thd, packet, k.str, k.length);
+        packet->append('=');
+        packet->append(v.str, v.length);
+      }
+      packet->append(')');
+    }
+
     assert(((key_info->flags & HA_USES_COMMENT) != 0) ==
            (key_info->comment.length > 0));
     if (key_info->flags & HA_USES_COMMENT) {

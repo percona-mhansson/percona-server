@@ -1422,7 +1422,8 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
     if (!idx_ele->is_hidden()) keyinfo->user_defined_key_parts++;
   }
 
-  if (has_vector_column && keyinfo->user_defined_key_parts == 1) {
+  if (has_vector_column && keyinfo->user_defined_key_parts == 1 &&
+      idx_obj->options().exists("vector_index_type")) {
     keyinfo->algorithm = HA_KEY_ALG_VECTOR;
     keyinfo->is_algorithm_explicit = false;
   }
@@ -1448,7 +1449,8 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
       break;
   }
 
-  if (has_vector_column && keyinfo->user_defined_key_parts == 1) {
+  if (has_vector_column && keyinfo->user_defined_key_parts == 1 &&
+      idx_obj->options().exists("vector_index_type")) {
     keyinfo->flags |= HA_VECTOR;
   }
 
@@ -1548,6 +1550,38 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
       &share->mem_root, idx_obj->secondary_engine_attribute());
   if (keyinfo->secondary_engine_attribute.length > 0)
     keyinfo->flags |= HA_INDEX_USES_SECONDARY_ENGINE_ATTRIBUTE;
+
+  if (idx_options.exists("vector_index_type")) {
+    if (idx_options.get("vector_index_type", &keyinfo->vector_index_type,
+                        &share->mem_root))
+      assert(false);
+  }
+
+  if (idx_options.exists("vector_construction_params")) {
+    dd::String_type s;
+    if (idx_options.get("vector_construction_params", &s)) assert(false);
+    if (!s.empty()) {
+      auto *params = new (&share->mem_root) Construction_params;
+      params->init(&share->mem_root);
+      size_t pos = 0;
+      while (pos < s.size()) {
+        auto eq = s.find('=', pos);
+        if (eq == std::string::npos) break;
+        auto comma = s.find(',', eq + 1);
+        auto val_end = (comma != std::string::npos) ? comma : s.size();
+        auto key = s.substr(pos, eq - pos);
+        auto val = s.substr(eq + 1, val_end - eq - 1);
+        LEX_CSTRING k = {strmake_root(&share->mem_root, key.data(), key.size()),
+                         key.size()};
+        LEX_CSTRING v = {strmake_root(&share->mem_root, val.data(), val.size()),
+                         val.size()};
+        params->push_back({k, v});
+        pos = (val_end < s.size()) ? val_end + 1 : s.size();
+      }
+      keyinfo->vector_construction_params = params;
+    }
+  }
+
   return (false);
 }
 

@@ -1422,7 +1422,8 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
     if (!idx_ele->is_hidden()) keyinfo->user_defined_key_parts++;
   }
 
-  if (has_vector_column && keyinfo->user_defined_key_parts == 1) {
+  if (has_vector_column && keyinfo->user_defined_key_parts == 1 &&
+      idx_obj->options().exists("vector_index_type")) {
     keyinfo->algorithm = HA_KEY_ALG_VECTOR;
     keyinfo->is_algorithm_explicit = false;
   }
@@ -1448,7 +1449,8 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
       break;
   }
 
-  if (has_vector_column && keyinfo->user_defined_key_parts == 1) {
+  if (has_vector_column && keyinfo->user_defined_key_parts == 1 &&
+      idx_obj->options().exists("vector_index_type")) {
     keyinfo->flags |= HA_VECTOR;
   }
 
@@ -1548,6 +1550,19 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
       &share->mem_root, idx_obj->secondary_engine_attribute());
   if (keyinfo->secondary_engine_attribute.length > 0)
     keyinfo->flags |= HA_INDEX_USES_SECONDARY_ENGINE_ATTRIBUTE;
+
+  if (idx_options.exists("vector_index_type")) {
+    if (idx_options.get("vector_index_type", &keyinfo->vector_index_type,
+                        &share->mem_root))
+      assert(false);
+  }
+
+  if (idx_options.exists("vector_construction_params")) {
+    if (idx_options.get("vector_construction_params",
+                        &keyinfo->vector_construction_params, &share->mem_root))
+      assert(false);
+  }
+
   return (false);
 }
 

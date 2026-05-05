@@ -3580,16 +3580,15 @@ create_index_stmt:
                                              $11.lock.get_or_default());
           }
         | CREATE VECTOR_SYM INDEX_SYM ident ON_SYM table_ident
-          '(' key_list_with_expression ')' opt_index_lock_and_algorithm
+          '(' key_list_with_expression ')' opt_index_lock_and_algorithm opt_index_options
           {
-            Index_options empty_options;
-            empty_options.init(YYMEM_ROOT);
             $$= NEW_PTN PT_create_index_stmt(@$, YYMEM_ROOT, KEYTYPE_VECTOR, $4,
-                                             nullptr, $6, $8, empty_options,
+                                             nullptr, $6, $8, $11,
                                              $10.algo.get_or_default(),
                                              $10.lock.get_or_default());
           }
         ;
+
 /*
   Only a limited subset of <expr> are allowed in
   CREATE COMPRESSION_DICTIONARY.

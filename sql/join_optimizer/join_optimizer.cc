@@ -1324,7 +1324,7 @@ AccessPath RefAccessBuilder::MakePath(
 
   AccessPath path;
   if (single_row) {
-    path.type = AccessPath::EQ_REF;
+    path.init<AccessPath::EqRef>();
     path.eq_ref().table = m_table;
     path.eq_ref().ref = lookup.ref;
 
@@ -1332,7 +1332,7 @@ AccessPath RefAccessBuilder::MakePath(
     // It's very rare that it should matter, though.
     path.ordering_state = m_receiver->m_orderings->SetOrder(m_ordering_idx);
   } else {
-    path.type = AccessPath::REF;
+    path.init<AccessPath::Ref>();
     path.ref().table = m_table;
     path.ref().ref = lookup.ref;
     path.ref().reverse = m_reverse;
@@ -2286,7 +2286,7 @@ AccessPath *FindCheapestIndexRangeScan(THD *thd, SEL_TREE *tree,
   KEY *key = &param->table->key_info[keynr];
 
   AccessPath *path = new (param->return_mem_root) AccessPath;
-  path->type = AccessPath::INDEX_RANGE_SCAN;
+  path->init<AccessPath::IndexRangeScan>();
   path->set_init_cost(0.0);
   path->set_cost(best_cost);
   path->set_cost_before_filter(best_cost);
@@ -2527,7 +2527,7 @@ void CostingReceiver::ProposeRangeScans(
     KEY *key = &param->table->key_info[keynr];
 
     AccessPath path;
-    path.type = AccessPath::INDEX_RANGE_SCAN;
+    path.init<AccessPath::IndexRangeScan>();
     path.set_init_cost(0.0);
     path.set_cost(scan.cost);
     path.set_cost_before_filter(scan.cost);
@@ -3007,7 +3007,7 @@ void CostingReceiver::ProposeRowIdOrderedIntersect(
   }
   // Make the intersect plan here
   AccessPath ror_intersect_path;
-  ror_intersect_path.type = AccessPath::ROWID_INTERSECTION;
+  ror_intersect_path.init<AccessPath::RowidIntersection>();
   ror_intersect_path.rowid_intersection().table = table;
   ror_intersect_path.rowid_intersection().forced_by_hint = false;
   ror_intersect_path.rowid_intersection().retrieve_full_rows =
@@ -3159,7 +3159,7 @@ void CostingReceiver::ProposeRowIdOrderedUnion(
                                                 std::log2(paths.size()));
 
   AccessPath ror_union_path;
-  ror_union_path.type = AccessPath::ROWID_UNION;
+  ror_union_path.init<AccessPath::RowidUnion>();
   ror_union_path.rowid_union().table = table;
   ror_union_path.rowid_union().forced_by_hint = false;
   ror_union_path.rowid_union().children = new (param->return_mem_root)
@@ -3382,7 +3382,7 @@ void CostingReceiver::ProposeIndexMerge(
   cost += sweep_cost.total_cost();
 
   AccessPath imerge_path;
-  imerge_path.type = AccessPath::INDEX_MERGE;
+  imerge_path.init<AccessPath::IndexMerge>();
   imerge_path.index_merge().table = table;
   imerge_path.index_merge().forced_by_hint = false;
   imerge_path.index_merge().allow_clustered_primary_key_scan =
@@ -3722,7 +3722,7 @@ bool CostingReceiver::ProposeTableScan(
   Table_ref *tl = table->pos_in_table_list;
   AccessPath path;
   if (tl->has_tablesample()) {
-    path.type = AccessPath::SAMPLE_SCAN;
+    path.init<AccessPath::SampleScan>();
     path.sample_scan().table = table;
     if (!tl->sampling_percentage->const_item() &&
         tl->update_sampling_percentage()) {
@@ -3731,12 +3731,12 @@ bool CostingReceiver::ProposeTableScan(
     path.sample_scan().sampling_percentage = tl->get_sampling_percentage();
     path.sample_scan().sampling_type = tl->get_sampling_type();
   } else if (tl->is_recursive_reference()) {
-    path.type = AccessPath::FOLLOW_TAIL;
+    path.init<AccessPath::FollowTail>();
     path.follow_tail().table = table;
     assert(forced_leftmost_table == 0);  // There can only be one, naturally.
     forced_leftmost_table = NodeMap{1} << node_idx;
   } else {
-    path.type = AccessPath::TABLE_SCAN;
+    path.init<AccessPath::TableScan>();
     path.table_scan().table = table;
   }
   path.ordering_state = 0;
@@ -3815,7 +3815,7 @@ bool CostingReceiver::ProposeIndexScan(
   }
 
   AccessPath path;
-  path.type = AccessPath::INDEX_SCAN;
+  path.init<AccessPath::IndexScan>();
   path.index_scan().table = table;
   path.index_scan().idx = key_idx;
   path.index_scan().use_order = ordering_idx != 0;
@@ -3849,7 +3849,7 @@ bool CostingReceiver::ProposeDistanceIndexScan(
   AccessPath path;
   unsigned int key_idx = order_info.key_idx;
 
-  path.type = AccessPath::INDEX_DISTANCE_SCAN;
+  path.init<AccessPath::IndexDistanceScan>();
   path.index_distance_scan().table = table;
   path.index_distance_scan().idx = key_idx;
 
@@ -5159,7 +5159,7 @@ void CostingReceiver::ProposeHashJoin(
   }
 
   AccessPath join_path;
-  join_path.type = AccessPath::HASH_JOIN;
+  join_path.init<AccessPath::HashJoin>();
   join_path.parameter_tables =
       (left_path->parameter_tables | right_path->parameter_tables) &
       ~(left | right);
@@ -5758,7 +5758,7 @@ void CostingReceiver::ProposeNestedLoopJoin(
   }
 
   AccessPath join_path;
-  join_path.type = AccessPath::NESTED_LOOP_JOIN;
+  join_path.init<AccessPath::NestedLoopJoin>();
   join_path.parameter_tables =
       (left_path->parameter_tables | right_path->parameter_tables) &
       ~(left | right);
@@ -6719,7 +6719,7 @@ AccessPath MakeSortPathWithoutFilesort(THD *thd, AccessPath *child,
                                        ORDER *order, int ordering_state) {
   assert(order != nullptr);
   AccessPath sort_path;
-  sort_path.type = AccessPath::SORT;
+  sort_path.init<AccessPath::Sort>();
   sort_path.ordering_state = ordering_state;
   sort_path.delayed_predicates = child->delayed_predicates;
   sort_path.sort().child = child;
@@ -7423,7 +7423,7 @@ AccessPath CreateStreamingAggregationPath(THD *thd, AccessPath *path,
   }
 
   AccessPath aggregate_path;
-  aggregate_path.type = AccessPath::AGGREGATE;
+  aggregate_path.init<AccessPath::Aggregate>();
   aggregate_path.aggregate().child = child_path;
   aggregate_path.aggregate().olap = olap;
   aggregate_path.set_num_output_rows(row_estimate);
@@ -7609,7 +7609,7 @@ void ApplyHavingOrQualifyCondition(THD *thd, Item *having_cond,
   AccessPathArray new_root_candidates(PSI_NOT_INSTRUMENTED);
   for (AccessPath *root_path : *root_candidates) {
     AccessPath filter_path;
-    filter_path.type = AccessPath::FILTER;
+    filter_path.init<AccessPath::Filter>();
     filter_path.filter().child = root_path;
     filter_path.filter().condition = having_cond;
     // We don't currently bother with materializing subqueries
@@ -7837,7 +7837,7 @@ AccessPath ApplyDistinctParameters::MakeSortPathForDistinct(
     LogicalOrderings::StateIndex ordering_state, double output_rows) const {
   assert(output_rows != kUnknownRowCount);
   AccessPath sort_path;
-  sort_path.type = AccessPath::SORT;
+  sort_path.init<AccessPath::Sort>();
   sort_path.sort().child = root_path;
   sort_path.sort().filesort = nullptr;
   sort_path.sort().remove_duplicates = true;
@@ -8103,7 +8103,7 @@ AccessPathArray ApplyOrderBy(THD *thd, const CostingReceiver &receiver,
           ForceMaterializationBeforeSort(query_block, need_rowid));
 
       AccessPath *sort_path = new (thd->mem_root) AccessPath;
-      sort_path->type = AccessPath::SORT;
+      sort_path->init<AccessPath::Sort>();
       sort_path->immediate_update_delete_table =
           root_path->immediate_update_delete_table;
       sort_path->sort().child = root_path;
@@ -8957,7 +8957,7 @@ bool ApplyAggregation(
       }
 
       AccessPath *sort_path = new (thd->mem_root) AccessPath;
-      sort_path->type = AccessPath::SORT;
+      sort_path->init<AccessPath::Sort>();
       sort_path->sort().child = root_path;
       sort_path->sort().filesort = nullptr;
       sort_path->sort().remove_duplicates = false;

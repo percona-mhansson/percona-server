@@ -584,7 +584,7 @@ AccessPath *MakeRowIdOrderedIndexScanAccessPath(ROR_SCAN_INFO *scan,
                                                 bool reuse_handler,
                                                 MEM_ROOT *mem_root) {
   AccessPath *path = new (mem_root) AccessPath;
-  path->type = AccessPath::INDEX_RANGE_SCAN;
+  path->init<AccessPath::IndexRangeScan>();
 
   // TODO(sgunders): The initial cost is high (it needs to read all rows and
   // sort), so we should not have zero init_cost.
@@ -866,7 +866,7 @@ AccessPath *get_best_ror_intersect(THD *thd, const RANGE_OPT_PARAM *param,
                       : nullptr;
 
     AccessPath *path = new (param->return_mem_root) AccessPath;
-    path->type = AccessPath::ROWID_INTERSECTION;
+    path->init<AccessPath::RowidIntersection>();
     path->set_cost(best_plan.m_total_cost.total_cost());
     /* Prevent divisons by zero */
     double best_rows = max(best_plan.m_out_rows, 1.0);

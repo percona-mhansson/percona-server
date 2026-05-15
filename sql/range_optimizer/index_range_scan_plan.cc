@@ -976,7 +976,7 @@ AccessPath *get_key_scans_params(THD *thd, RANGE_OPT_PARAM *param,
   KEY *used_key = &param->table->key_info[param->real_keynr[best_idx]];
 
   AccessPath *path = new (param->return_mem_root) AccessPath;
-  path->type = AccessPath::INDEX_RANGE_SCAN;
+  path->init<AccessPath::IndexRangeScan>();
   path->set_cost(read_cost);
   path->set_num_output_rows(best_records);
   path->index_range_scan().index = param->real_keynr[best_idx];

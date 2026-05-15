@@ -91,7 +91,7 @@ AccessPath *NewSortAccessPath(THD *thd, AccessPath *child, Filesort *filesort,
   assert(order != nullptr);
 
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::SORT;
+  path->init<AccessPath::Sort>();
   path->count_examined_rows = count_examined_rows;
   path->sort().child = child;
   path->sort().filesort = filesort;
@@ -124,7 +124,7 @@ AccessPath *NewDeleteRowsAccessPath(THD *thd, AccessPath *child,
                                     table_map immediate_tables) {
   assert(IsSubset(immediate_tables, delete_tables));
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::DELETE_ROWS;
+  path->init<AccessPath::DeleteRows>();
   path->delete_rows().child = child;
   path->delete_rows().tables_to_delete_from = delete_tables;
   path->delete_rows().immediate_tables = immediate_tables;
@@ -136,7 +136,7 @@ AccessPath *NewUpdateRowsAccessPath(THD *thd, AccessPath *child,
                                     table_map immediate_tables) {
   assert(IsSubset(immediate_tables, update_tables));
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::UPDATE_ROWS;
+  path->init<AccessPath::UpdateRows>();
   path->update_rows().child = child;
   path->update_rows().tables_to_update = update_tables;
   path->update_rows().immediate_tables = immediate_tables;
@@ -166,7 +166,7 @@ static Mem_root_array<Item_values_column *> *GetTableValueConstructorOutputRefs(
 AccessPath *NewTableValueConstructorAccessPath(const THD *thd,
                                                const JOIN *join) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::TABLE_VALUE_CONSTRUCTOR;
+  path->init<AccessPath::TableValueConstructor>();
   // The iterator keeps track of which row it is at in examined_rows,
   // so we always need to give it the pointer.
   path->count_examined_rows = true;
@@ -1603,7 +1603,7 @@ void ExpandSingleFilterAccessPath(THD *thd, AccessPath *path, const JOIN *join,
     assert(!items.is_empty());
 
     AccessPath *filter_path = new (thd->mem_root) AccessPath;
-    filter_path->type = AccessPath::FILTER;
+    filter_path->init<AccessPath::Filter>();
     filter_path->filter().child = right_path;
     filter_path->has_group_skip_scan = right_path->has_group_skip_scan;
 
@@ -1662,7 +1662,7 @@ void ExpandSingleFilterAccessPath(THD *thd, AccessPath *path, const JOIN *join,
   assert(new_path->cost() >= new_path->init_cost());
   assert(new_path->init_cost() >= new_path->init_once_cost());
 
-  path->type = AccessPath::FILTER;
+  path->init<AccessPath::Filter>();
   path->filter().condition = condition;
   path->filter().child = new_path;
   path->has_group_skip_scan = new_path->has_group_skip_scan;

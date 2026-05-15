@@ -31,6 +31,7 @@
 #include <span>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "my_alloc.h"
@@ -94,12 +95,12 @@ struct JoinPredicate {
   // or {a, c} → b.
   //
   // Used in the processing of interesting orders.
-  FunctionalDependencySet functional_dependencies;
+  FunctionalDependencySet functional_dependencies{};
 
   // A less compact form of functional_dependencies, used during building
   // (FunctionalDependencySet bitmaps are only available after all functional
   // indexes have been collected and Build() has been called).
-  Mem_root_array<int> functional_dependencies_idx;
+  Mem_root_array<int> functional_dependencies_idx{};
 
   // A semijoin on the following format:
   //
@@ -294,7 +295,387 @@ struct AccessPath {
     // Access paths that modify tables.
     DELETE_ROWS,
     UPDATE_ROWS,
-  } type;
+  };
+
+  // Nested type definitions for each access path variant.
+  // For information about the meaning of each value, see the corresponding
+  // row iterator constructors.
+
+  struct TableScan {
+    TABLE *table;
+  };
+  struct SampleScan {
+    TABLE *table;
+    double sampling_percentage;
+    enum tablesample_type sampling_type;
+  };
+  struct IndexScan {
+    TABLE *table;
+    int idx;
+    bool use_order;
+    bool reverse;
+  };
+  struct IndexDistanceScan {
+    TABLE *table;
+    int idx;
+    QUICK_RANGE *range;
+    bool reverse;
+  };
+  struct Ref {
+    TABLE *table;
+    Index_lookup *ref;
+    bool use_order;
+    bool reverse;
+  };
+  struct RefOrNull {
+    TABLE *table;
+    Index_lookup *ref;
+    bool use_order;
+  };
+  struct EqRef {
+    TABLE *table;
+    Index_lookup *ref;
+  };
+  struct PushedJoinRef {
+    TABLE *table;
+    Index_lookup *ref;
+    bool use_order;
+    bool is_unique;
+  };
+  struct FullTextSearch {
+    TABLE *table;
+    Index_lookup *ref;
+    bool use_order;
+    bool use_limit;
+    Item_func_match *ft_func;
+  };
+  struct ConstTable {
+    TABLE *table;
+    Index_lookup *ref;
+  };
+  struct Mrr {
+    TABLE *table;
+    Index_lookup *ref;
+    AccessPath *bka_path;
+    int mrr_flags;
+    bool keep_current_rowid;
+  };
+  struct FollowTail {
+    TABLE *table;
+  };
+  struct IndexRangeScan {
+    // The key part(s) we are scanning on. Note that this may be an array.
+    // You can get the table we are working on by looking into
+    // used_key_parts[0].field->table (it is not stored directly, to avoid
+    // going over the AccessPath size limits).
+    KEY_PART *used_key_part;
+
+    // The actual ranges we are scanning over (originally derived from "key").
+    // Not a Bounds_checked_array, to save 4 bytes on the length.
+    QUICK_RANGE **ranges;
+    unsigned num_ranges;
+
+    unsigned mrr_flags;
+    unsigned mrr_buf_size;
+
+    // Which index (in the TABLE) we are scanning over, and how many of its
+    // key parts we are using.
+    unsigned index;
+    unsigned num_used_key_parts;
+
+    // If true, the scan can return rows in rowid order.
+    bool can_be_used_for_ror : 1;
+
+    // If true, the scan _should_ return rows in rowid order.
+    // Should only be set if can_be_used_for_ror == true.
+    bool need_rows_in_rowid_order : 1;
+
+    // If true, this plan can be used for index merge scan.
+    bool can_be_used_for_imerge : 1;
+
+    // See row intersection for more details.
+    bool reuse_handler : 1;
+
+    // Whether we are scanning over a geometry key part.
+    bool geometry : 1;
+
+    // Whether we need a reverse scan. Only supported if geometry == false.
+    bool reverse : 1;
+
+    // For a reverse scan, if we are using extended key parts. It is needed,
+    // to set correct flags when retrieving records.
+    bool using_extended_key_parts : 1;
+  };
+  struct IndexMerge {
+    TABLE *table;
+    bool forced_by_hint;
+    bool allow_clustered_primary_key_scan;
+    Mem_root_array<AccessPath *> *children;
+  };
+  struct RowidIntersection {
+    TABLE *table;
+    Mem_root_array<AccessPath *> *children;
+
+    // Clustered primary key scan, if any.
+    AccessPath *cpk_child;
+
+    bool forced_by_hint;
+    bool retrieve_full_rows;
+    bool need_rows_in_rowid_order;
+
+    // If true, the first child scan should reuse table->file instead of
+    // creating its own. This is true if the intersection is the topmost
+    // range scan, but _not_ if it's below a union. (The reasons for this
+    // are unknown.) It can also be negated by logic involving
+    // retrieve_full_rows and is_covering, again for unknown reasons.
+    //
+    // This is not only for performance; multi-table delete has a hidden
+    // dependency on this behavior when running against certain types of
+    // tables (e.g. MyISAM), as it assumes table->file is correctly positioned
+    // when deleting (and not all table types can transfer the position of one
+    // handler to another by using position()).
+    bool reuse_handler;
+
+    // true if no row retrieval phase is necessary.
+    bool is_covering;
+  };
+  struct RowidUnion {
+    TABLE *table;
+    Mem_root_array<AccessPath *> *children;
+    bool forced_by_hint;
+  };
+  struct IndexSkipScan {
+    TABLE *table;
+    unsigned index;
+    unsigned num_used_key_parts;
+    bool forced_by_hint;
+
+    // Large, and has nontrivial destructors, so split out into
+    // its own allocation.
+    IndexSkipScanParameters *param;
+  };
+  struct GroupIndexSkipScan {
+    TABLE *table;
+    unsigned index;
+    unsigned num_used_key_parts;
+    bool forced_by_hint;
+
+    // Large, so split out into its own allocation.
+    GroupIndexSkipScanParameters *param;
+  };
+  struct DynamicIndexRangeScan {
+    TABLE *table;
+    QEP_TAB *qep_tab;  // Used only for buffering.
+  };
+  struct TableValueConstructor {
+    Mem_root_array<Item_values_column *> *output_refs;
+  };
+  struct FakeSingleRow {
+    // No members.
+  };
+  struct ZeroRows {
+    // The child is optional. It is only used for keeping track of which
+    // tables are pruned away by this path, and it is only needed when this
+    // path is on the inner side of an outer join. See ZeroRowsIterator for
+    // details. The child of a ZERO_ROWS access path will not be visited by
+    // WalkAccessPaths(). It will be visited by WalkTablesUnderAccessPath()
+    // only if called with include_pruned_tables = true. No iterator is
+    // created for the child, and the child is not shown by EXPLAIN.
+    AccessPath *child;
+    // Used for EXPLAIN only.
+    // TODO(sgunders): make an enum.
+    const char *cause;
+  };
+  struct ZeroRowsAggregated {
+    // Used for EXPLAIN only.
+    // TODO(sgunders): make an enum.
+    const char *cause;
+  };
+  struct MaterializedTableFunction {
+    TABLE *table;
+    Table_function *table_function;
+    AccessPath *table_path;
+  };
+  struct UnqualifiedCount {};
+  struct NestedLoopJoin {
+    AccessPath *outer, *inner;
+    JoinType join_type;  // Somewhat redundant wrt. join_predicate.
+    bool pfs_batch_mode;
+    bool already_expanded_predicates;
+    const JoinPredicate *join_predicate;
+
+    // Equijoin filters to apply before the join, if any.
+    // Indexes into join_predicate->expr->equijoin_conditions.
+    // Non-equijoin conditions are always applied.
+    // If already_expanded_predicates is true, do not re-expand.
+    OverflowBitset equijoin_predicates;
+  };
+  struct NestedLoopSemijoinWithDuplicateRemoval {
+    AccessPath *outer, *inner;
+    const TABLE *table;
+    KEY *key;
+    size_t key_len;
+  };
+  struct BkaJoin {
+    AccessPath *outer, *inner;
+    JoinType join_type;
+    unsigned mrr_length_per_rec;
+    float rec_per_key;
+    bool store_rowids;  // Whether we are below a weedout or not.
+    table_map tables_to_get_rowid_for;
+  };
+  struct HashJoin {
+    AccessPath *outer, *inner;
+    const JoinPredicate *join_predicate;
+    bool allow_spill_to_disk;
+    bool store_rowids;  // Whether we are below a weedout or not.
+    bool rewrite_semi_to_inner;
+    table_map tables_to_get_rowid_for;
+  };
+  struct Filter {
+    AccessPath *child;
+    Item *condition;
+
+    // This parameter, unlike nearly all others, is not passed to the the
+    // actual iterator. Instead, if true, it signifies that when creating
+    // the iterator, all materializable subqueries in "condition" should be
+    // materialized (with any in2exists condition removed first). In the
+    // very rare case that there are two or more such subqueries, this is
+    // an all-or-nothing decision, for simplicity.
+    //
+    // See FinalizeMaterializedSubqueries().
+    bool materialize_subqueries;
+  };
+  struct Sort {
+    AccessPath *child;
+    Filesort *filesort;
+    table_map tables_to_get_rowid_for;
+
+    // If filesort is nullptr: A new filesort will be created at the
+    // end of optimization, using this order and flags. Otherwise: Only
+    // used by EXPLAIN.
+    ORDER *order;
+    ha_rows limit;
+    bool remove_duplicates;
+    bool unwrap_rollup;
+    bool force_sort_rowids;
+  };
+  struct Aggregate {
+    AccessPath *child;
+    olap_type olap;
+  };
+  struct TemptableAggregate {
+    AccessPath *subquery_path;
+    JOIN *join;
+    Temp_table_param *temp_table_param;
+    TABLE *table;
+    AccessPath *table_path;
+    int ref_slice;
+  };
+  struct LimitOffset {
+    AccessPath *child;
+    ha_rows limit;
+    ha_rows offset;
+    bool count_all_rows;
+    bool reject_multiple_rows;
+    // Only used when the LIMIT is on a UNION with SQL_CALC_FOUND_ROWS.
+    // See Query_expression::send_records.
+    ha_rows *send_records_override;
+  };
+  struct Stream {
+    AccessPath *child;
+    JOIN *join;
+    Temp_table_param *temp_table_param;
+    TABLE *table;
+    bool provide_rowid;
+    int ref_slice;
+  };
+  struct Materialize {
+    // NOTE: The only legal access paths within table_path are
+    // TABLE_SCAN, REF, REF_OR_NULL, EQ_REF, ALTERNATIVE,
+    // CONST_TABLE (somewhat nonsensical), INDEX_SCAN and DYNAMIC_INDEX_SCAN
+    AccessPath *table_path;
+
+    // Large, and has nontrivial destructors, so split out
+    // into its own allocation.
+    MaterializePathParameters *param;
+    /** The total cost of executing the queries that we materialize.*/
+    double subquery_cost;
+    /// The number of materialized rows (as opposed to the number of rows
+    /// fetched by table_path). Needed for 'explain'.
+    double subquery_rows;
+  };
+  struct MaterializeInformationSchemaTable {
+    AccessPath *table_path;
+    Table_ref *table_list;
+    Item *condition;
+  };
+  struct Append {
+    Mem_root_array<AppendPathParameters> *children;
+  };
+  struct Window {
+    AccessPath *child;
+    ::Window *window;
+    TABLE *temp_table;
+    Temp_table_param *temp_table_param;
+    int ref_slice;
+    bool needs_buffering;
+  };
+  struct Weedout {
+    AccessPath *child;
+    SJ_TMP_TABLE *weedout_table;
+    table_map tables_to_get_rowid_for;
+  };
+  struct RemoveDuplicates {
+    using ItemSpan = std::span<Item *>;
+    AccessPath *child;
+
+    /// @cond IGNORE
+    // These functions somehow triggers a doxygen warning. (Presumably
+    // a doxygen bug.)
+    ItemSpan &group_items() {
+      return reinterpret_cast<ItemSpan &>(m_group_items);
+    }
+
+    const ItemSpan &group_items() const {
+      return reinterpret_cast<const ItemSpan &>(m_group_items);
+    }
+    /// @endcond
+
+   private:
+    // gcc 11 does not support a span as a union member. Replace this
+    // with "std::span<Item *> group_items" when we move to newer gcc version.
+    alignas(alignof(ItemSpan)) std::byte m_group_items[sizeof(ItemSpan)];
+  };
+  struct RemoveDuplicatesOnIndex {
+    AccessPath *child;
+    TABLE *table;
+    KEY *key;
+    unsigned loosescan_key_len;
+  };
+  struct Alternative {
+    AccessPath *table_scan_path;
+
+    // For the ref.
+    AccessPath *child;
+    Index_lookup *used_ref;
+  };
+  struct CacheInvalidator {
+    AccessPath *child;
+    const char *name;
+  };
+  struct DeleteRows {
+    AccessPath *child;
+    table_map tables_to_delete_from;
+    table_map immediate_tables;
+  };
+  struct UpdateRows {
+    AccessPath *child;
+    table_map tables_to_update;
+    table_map immediate_tables;
+  };
+
+  Type type;
 
   /// A general enum to describe the safety of a given operation.
   /// Currently we only use this to describe row IDs, but it can easily
@@ -537,374 +918,382 @@ struct AccessPath {
   /// destroyed.
   void *secondary_engine_data{nullptr};
 
-  // Accessors for the union below.
+  // Accessors for the variant below.
   auto &table_scan() {
     assert(type == TABLE_SCAN);
-    return u.table_scan;
+    return std::get<TableScan>(u);
   }
   const auto &table_scan() const {
     assert(type == TABLE_SCAN);
-    return u.table_scan;
+    return std::get<TableScan>(u);
   }
   auto &sample_scan() {
     assert(type == SAMPLE_SCAN);
-    return u.sample_scan;
+    return std::get<SampleScan>(u);
   }
   const auto &sample_scan() const {
     assert(type == SAMPLE_SCAN);
-    return u.sample_scan;
+    return std::get<SampleScan>(u);
   }
   auto &index_scan() {
     assert(type == INDEX_SCAN);
-    return u.index_scan;
+    return std::get<IndexScan>(u);
   }
   const auto &index_scan() const {
     assert(type == INDEX_SCAN);
-    return u.index_scan;
+    return std::get<IndexScan>(u);
   }
   auto &index_distance_scan() {
     assert(type == INDEX_DISTANCE_SCAN);
-    return u.index_distance_scan;
+    return std::get<IndexDistanceScan>(u);
   }
   const auto &index_distance_scan() const {
     assert(type == INDEX_DISTANCE_SCAN);
-    return u.index_distance_scan;
+    return std::get<IndexDistanceScan>(u);
   }
   auto &ref() {
     assert(type == REF);
-    return u.ref;
+    return std::get<Ref>(u);
   }
   const auto &ref() const {
     assert(type == REF);
-    return u.ref;
+    return std::get<Ref>(u);
   }
   auto &ref_or_null() {
     assert(type == REF_OR_NULL);
-    return u.ref_or_null;
+    return std::get<RefOrNull>(u);
   }
   const auto &ref_or_null() const {
     assert(type == REF_OR_NULL);
-    return u.ref_or_null;
+    return std::get<RefOrNull>(u);
   }
   auto &eq_ref() {
     assert(type == EQ_REF);
-    return u.eq_ref;
+    return std::get<EqRef>(u);
   }
   const auto &eq_ref() const {
     assert(type == EQ_REF);
-    return u.eq_ref;
+    return std::get<EqRef>(u);
   }
   auto &pushed_join_ref() {
     assert(type == PUSHED_JOIN_REF);
-    return u.pushed_join_ref;
+    return std::get<PushedJoinRef>(u);
   }
   const auto &pushed_join_ref() const {
     assert(type == PUSHED_JOIN_REF);
-    return u.pushed_join_ref;
+    return std::get<PushedJoinRef>(u);
   }
   auto &full_text_search() {
     assert(type == FULL_TEXT_SEARCH);
-    return u.full_text_search;
+    return std::get<FullTextSearch>(u);
   }
   const auto &full_text_search() const {
     assert(type == FULL_TEXT_SEARCH);
-    return u.full_text_search;
+    return std::get<FullTextSearch>(u);
   }
   auto &const_table() {
     assert(type == CONST_TABLE);
-    return u.const_table;
+    return std::get<ConstTable>(u);
   }
   const auto &const_table() const {
     assert(type == CONST_TABLE);
-    return u.const_table;
+    return std::get<ConstTable>(u);
   }
   auto &mrr() {
     assert(type == MRR);
-    return u.mrr;
+    return std::get<Mrr>(u);
   }
   const auto &mrr() const {
     assert(type == MRR);
-    return u.mrr;
+    return std::get<Mrr>(u);
   }
   auto &follow_tail() {
     assert(type == FOLLOW_TAIL);
-    return u.follow_tail;
+    return std::get<FollowTail>(u);
   }
   const auto &follow_tail() const {
     assert(type == FOLLOW_TAIL);
-    return u.follow_tail;
+    return std::get<FollowTail>(u);
   }
   auto &index_range_scan() {
     assert(type == INDEX_RANGE_SCAN);
-    return u.index_range_scan;
+    return std::get<IndexRangeScan>(u);
   }
   const auto &index_range_scan() const {
     assert(type == INDEX_RANGE_SCAN);
-    return u.index_range_scan;
+    return std::get<IndexRangeScan>(u);
   }
   auto &index_merge() {
     assert(type == INDEX_MERGE);
-    return u.index_merge;
+    return std::get<IndexMerge>(u);
   }
   const auto &index_merge() const {
     assert(type == INDEX_MERGE);
-    return u.index_merge;
+    return std::get<IndexMerge>(u);
   }
   auto &rowid_intersection() {
     assert(type == ROWID_INTERSECTION);
-    return u.rowid_intersection;
+    return std::get<RowidIntersection>(u);
   }
   const auto &rowid_intersection() const {
     assert(type == ROWID_INTERSECTION);
-    return u.rowid_intersection;
+    return std::get<RowidIntersection>(u);
   }
   auto &rowid_union() {
     assert(type == ROWID_UNION);
-    return u.rowid_union;
+    return std::get<RowidUnion>(u);
   }
   const auto &rowid_union() const {
     assert(type == ROWID_UNION);
-    return u.rowid_union;
+    return std::get<RowidUnion>(u);
   }
   auto &index_skip_scan() {
     assert(type == INDEX_SKIP_SCAN);
-    return u.index_skip_scan;
+    return std::get<IndexSkipScan>(u);
   }
   const auto &index_skip_scan() const {
     assert(type == INDEX_SKIP_SCAN);
-    return u.index_skip_scan;
+    return std::get<IndexSkipScan>(u);
   }
   auto &group_index_skip_scan() {
     assert(type == GROUP_INDEX_SKIP_SCAN);
-    return u.group_index_skip_scan;
+    return std::get<GroupIndexSkipScan>(u);
   }
   const auto &group_index_skip_scan() const {
     assert(type == GROUP_INDEX_SKIP_SCAN);
-    return u.group_index_skip_scan;
+    return std::get<GroupIndexSkipScan>(u);
   }
   auto &dynamic_index_range_scan() {
     assert(type == DYNAMIC_INDEX_RANGE_SCAN);
-    return u.dynamic_index_range_scan;
+    return std::get<DynamicIndexRangeScan>(u);
   }
   const auto &dynamic_index_range_scan() const {
     assert(type == DYNAMIC_INDEX_RANGE_SCAN);
-    return u.dynamic_index_range_scan;
+    return std::get<DynamicIndexRangeScan>(u);
   }
   auto &materialized_table_function() {
     assert(type == MATERIALIZED_TABLE_FUNCTION);
-    return u.materialized_table_function;
+    return std::get<MaterializedTableFunction>(u);
   }
   const auto &materialized_table_function() const {
     assert(type == MATERIALIZED_TABLE_FUNCTION);
-    return u.materialized_table_function;
+    return std::get<MaterializedTableFunction>(u);
   }
   auto &unqualified_count() {
     assert(type == UNQUALIFIED_COUNT);
-    return u.unqualified_count;
+    return std::get<UnqualifiedCount>(u);
   }
   const auto &unqualified_count() const {
     assert(type == UNQUALIFIED_COUNT);
-    return u.unqualified_count;
+    return std::get<UnqualifiedCount>(u);
   }
   auto &table_value_constructor() {
     assert(type == TABLE_VALUE_CONSTRUCTOR);
-    return u.table_value_constructor;
+    return std::get<TableValueConstructor>(u);
   }
   const auto &table_value_constructor() const {
     assert(type == TABLE_VALUE_CONSTRUCTOR);
-    return u.table_value_constructor;
+    return std::get<TableValueConstructor>(u);
   }
   auto &fake_single_row() {
     assert(type == FAKE_SINGLE_ROW);
-    return u.fake_single_row;
+    return std::get<FakeSingleRow>(u);
   }
   const auto &fake_single_row() const {
     assert(type == FAKE_SINGLE_ROW);
-    return u.fake_single_row;
+    return std::get<FakeSingleRow>(u);
   }
   auto &zero_rows() {
     assert(type == ZERO_ROWS);
-    return u.zero_rows;
+    return std::get<ZeroRows>(u);
   }
   const auto &zero_rows() const {
     assert(type == ZERO_ROWS);
-    return u.zero_rows;
+    return std::get<ZeroRows>(u);
   }
   auto &zero_rows_aggregated() {
     assert(type == ZERO_ROWS_AGGREGATED);
-    return u.zero_rows_aggregated;
+    return std::get<ZeroRowsAggregated>(u);
   }
   const auto &zero_rows_aggregated() const {
     assert(type == ZERO_ROWS_AGGREGATED);
-    return u.zero_rows_aggregated;
+    return std::get<ZeroRowsAggregated>(u);
   }
   auto &hash_join() {
     assert(type == HASH_JOIN);
-    return u.hash_join;
+    return std::get<HashJoin>(u);
   }
   const auto &hash_join() const {
     assert(type == HASH_JOIN);
-    return u.hash_join;
+    return std::get<HashJoin>(u);
   }
   auto &bka_join() {
     assert(type == BKA_JOIN);
-    return u.bka_join;
+    return std::get<BkaJoin>(u);
   }
   const auto &bka_join() const {
     assert(type == BKA_JOIN);
-    return u.bka_join;
+    return std::get<BkaJoin>(u);
   }
   auto &nested_loop_join() {
     assert(type == NESTED_LOOP_JOIN);
-    return u.nested_loop_join;
+    return std::get<NestedLoopJoin>(u);
   }
   const auto &nested_loop_join() const {
     assert(type == NESTED_LOOP_JOIN);
-    return u.nested_loop_join;
+    return std::get<NestedLoopJoin>(u);
   }
   auto &nested_loop_semijoin_with_duplicate_removal() {
     assert(type == NESTED_LOOP_SEMIJOIN_WITH_DUPLICATE_REMOVAL);
-    return u.nested_loop_semijoin_with_duplicate_removal;
+    return std::get<NestedLoopSemijoinWithDuplicateRemoval>(u);
   }
   const auto &nested_loop_semijoin_with_duplicate_removal() const {
     assert(type == NESTED_LOOP_SEMIJOIN_WITH_DUPLICATE_REMOVAL);
-    return u.nested_loop_semijoin_with_duplicate_removal;
+    return std::get<NestedLoopSemijoinWithDuplicateRemoval>(u);
   }
   auto &filter() {
     assert(type == FILTER);
-    return u.filter;
+    return std::get<Filter>(u);
   }
   const auto &filter() const {
     assert(type == FILTER);
-    return u.filter;
+    return std::get<Filter>(u);
   }
   auto &sort() {
     assert(type == SORT);
-    return u.sort;
+    return std::get<Sort>(u);
   }
   const auto &sort() const {
     assert(type == SORT);
-    return u.sort;
+    return std::get<Sort>(u);
   }
   auto &aggregate() {
     assert(type == AGGREGATE);
-    return u.aggregate;
+    return std::get<Aggregate>(u);
   }
   const auto &aggregate() const {
     assert(type == AGGREGATE);
-    return u.aggregate;
+    return std::get<Aggregate>(u);
   }
   auto &temptable_aggregate() {
     assert(type == TEMPTABLE_AGGREGATE);
-    return u.temptable_aggregate;
+    return std::get<TemptableAggregate>(u);
   }
   const auto &temptable_aggregate() const {
     assert(type == TEMPTABLE_AGGREGATE);
-    return u.temptable_aggregate;
+    return std::get<TemptableAggregate>(u);
   }
   auto &limit_offset() {
     assert(type == LIMIT_OFFSET);
-    return u.limit_offset;
+    return std::get<LimitOffset>(u);
   }
   const auto &limit_offset() const {
     assert(type == LIMIT_OFFSET);
-    return u.limit_offset;
+    return std::get<LimitOffset>(u);
   }
   auto &stream() {
     assert(type == STREAM);
-    return u.stream;
+    return std::get<Stream>(u);
   }
   const auto &stream() const {
     assert(type == STREAM);
-    return u.stream;
+    return std::get<Stream>(u);
   }
   auto &materialize() {
     assert(type == MATERIALIZE);
-    return u.materialize;
+    return std::get<Materialize>(u);
   }
   const auto &materialize() const {
     assert(type == MATERIALIZE);
-    return u.materialize;
+    return std::get<Materialize>(u);
   }
   auto &materialize_information_schema_table() {
     assert(type == MATERIALIZE_INFORMATION_SCHEMA_TABLE);
-    return u.materialize_information_schema_table;
+    return std::get<MaterializeInformationSchemaTable>(u);
   }
   const auto &materialize_information_schema_table() const {
     assert(type == MATERIALIZE_INFORMATION_SCHEMA_TABLE);
-    return u.materialize_information_schema_table;
+    return std::get<MaterializeInformationSchemaTable>(u);
   }
   auto &append() {
     assert(type == APPEND);
-    return u.append;
+    return std::get<Append>(u);
   }
   const auto &append() const {
     assert(type == APPEND);
-    return u.append;
+    return std::get<Append>(u);
   }
   auto &window() {
     assert(type == WINDOW);
-    return u.window;
+    return std::get<Window>(u);
   }
   const auto &window() const {
     assert(type == WINDOW);
-    return u.window;
+    return std::get<Window>(u);
   }
   auto &weedout() {
     assert(type == WEEDOUT);
-    return u.weedout;
+    return std::get<Weedout>(u);
   }
   const auto &weedout() const {
     assert(type == WEEDOUT);
-    return u.weedout;
+    return std::get<Weedout>(u);
   }
   auto &remove_duplicates() {
     assert(type == REMOVE_DUPLICATES);
-    return u.remove_duplicates;
+    return std::get<RemoveDuplicates>(u);
   }
   const auto &remove_duplicates() const {
     assert(type == REMOVE_DUPLICATES);
-    return u.remove_duplicates;
+    return std::get<RemoveDuplicates>(u);
   }
   auto &remove_duplicates_on_index() {
     assert(type == REMOVE_DUPLICATES_ON_INDEX);
-    return u.remove_duplicates_on_index;
+    return std::get<RemoveDuplicatesOnIndex>(u);
   }
   const auto &remove_duplicates_on_index() const {
     assert(type == REMOVE_DUPLICATES_ON_INDEX);
-    return u.remove_duplicates_on_index;
+    return std::get<RemoveDuplicatesOnIndex>(u);
   }
   auto &alternative() {
     assert(type == ALTERNATIVE);
-    return u.alternative;
+    return std::get<Alternative>(u);
   }
   const auto &alternative() const {
     assert(type == ALTERNATIVE);
-    return u.alternative;
+    return std::get<Alternative>(u);
   }
   auto &cache_invalidator() {
     assert(type == CACHE_INVALIDATOR);
-    return u.cache_invalidator;
+    return std::get<CacheInvalidator>(u);
   }
   const auto &cache_invalidator() const {
     assert(type == CACHE_INVALIDATOR);
-    return u.cache_invalidator;
+    return std::get<CacheInvalidator>(u);
   }
   auto &delete_rows() {
     assert(type == DELETE_ROWS);
-    return u.delete_rows;
+    return std::get<DeleteRows>(u);
   }
   const auto &delete_rows() const {
     assert(type == DELETE_ROWS);
-    return u.delete_rows;
+    return std::get<DeleteRows>(u);
   }
   auto &update_rows() {
     assert(type == UPDATE_ROWS);
-    return u.update_rows;
+    return std::get<UpdateRows>(u);
   }
   const auto &update_rows() const {
     assert(type == UPDATE_ROWS);
-    return u.update_rows;
+    return std::get<UpdateRows>(u);
+  }
+
+  /// Emplace a new variant alternative and set the type tag accordingly.
+  template <typename T>
+  T &init() {
+    auto &val = u.emplace<T>();
+    type = static_cast<Type>(u.index());
+    return val;
   }
 
   double num_output_rows() const { return m_num_output_rows; }
@@ -947,408 +1336,32 @@ struct AccessPath {
   /// (filters have zero initialization cost).
   double m_cost_before_filter{kUnknownCost};
 
-  // We'd prefer if this could be an std::variant, but we don't have C++17 yet.
   // It is private to force all access to be through the type-checking
   // accessors.
-  //
-  // For information about the meaning of each value, see the corresponding
-  // row iterator constructors.
-  union {
-    struct {
-      TABLE *table;
-    } table_scan;
-    struct {
-      TABLE *table;
-      double sampling_percentage;
-      enum tablesample_type sampling_type;
-    } sample_scan;
-    struct {
-      TABLE *table;
-      int idx;
-      bool use_order;
-      bool reverse;
-    } index_scan;
-    struct {
-      TABLE *table;
-      int idx;
-      QUICK_RANGE *range;
-      bool reverse;
-    } index_distance_scan;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-      bool use_order;
-      bool reverse;
-    } ref;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-      bool use_order;
-    } ref_or_null;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-    } eq_ref;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-      bool use_order;
-      bool is_unique;
-    } pushed_join_ref;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-      bool use_order;
-      bool use_limit;
-      Item_func_match *ft_func;
-    } full_text_search;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-    } const_table;
-    struct {
-      TABLE *table;
-      Index_lookup *ref;
-      AccessPath *bka_path;
-      int mrr_flags;
-      bool keep_current_rowid;
-    } mrr;
-    struct {
-      TABLE *table;
-    } follow_tail;
-    struct {
-      // The key part(s) we are scanning on. Note that this may be an array.
-      // You can get the table we are working on by looking into
-      // used_key_parts[0].field->table (it is not stored directly, to avoid
-      // going over the AccessPath size limits).
-      KEY_PART *used_key_part;
-
-      // The actual ranges we are scanning over (originally derived from “key”).
-      // Not a Bounds_checked_array, to save 4 bytes on the length.
-      QUICK_RANGE **ranges;
-      unsigned num_ranges;
-
-      unsigned mrr_flags;
-      unsigned mrr_buf_size;
-
-      // Which index (in the TABLE) we are scanning over, and how many of its
-      // key parts we are using.
-      unsigned index;
-      unsigned num_used_key_parts;
-
-      // If true, the scan can return rows in rowid order.
-      bool can_be_used_for_ror : 1;
-
-      // If true, the scan _should_ return rows in rowid order.
-      // Should only be set if can_be_used_for_ror == true.
-      bool need_rows_in_rowid_order : 1;
-
-      // If true, this plan can be used for index merge scan.
-      bool can_be_used_for_imerge : 1;
-
-      // See row intersection for more details.
-      bool reuse_handler : 1;
-
-      // Whether we are scanning over a geometry key part.
-      bool geometry : 1;
-
-      // Whether we need a reverse scan. Only supported if geometry == false.
-      bool reverse : 1;
-
-      // For a reverse scan, if we are using extended key parts. It is needed,
-      // to set correct flags when retrieving records.
-      bool using_extended_key_parts : 1;
-    } index_range_scan;
-    struct {
-      TABLE *table;
-      bool forced_by_hint;
-      bool allow_clustered_primary_key_scan;
-      Mem_root_array<AccessPath *> *children;
-    } index_merge;
-    struct {
-      TABLE *table;
-      Mem_root_array<AccessPath *> *children;
-
-      // Clustered primary key scan, if any.
-      AccessPath *cpk_child;
-
-      bool forced_by_hint;
-      bool retrieve_full_rows;
-      bool need_rows_in_rowid_order;
-
-      // If true, the first child scan should reuse table->file instead of
-      // creating its own. This is true if the intersection is the topmost
-      // range scan, but _not_ if it's below a union. (The reasons for this
-      // are unknown.) It can also be negated by logic involving
-      // retrieve_full_rows and is_covering, again for unknown reasons.
-      //
-      // This is not only for performance; multi-table delete has a hidden
-      // dependency on this behavior when running against certain types of
-      // tables (e.g. MyISAM), as it assumes table->file is correctly positioned
-      // when deleting (and not all table types can transfer the position of one
-      // handler to another by using position()).
-      bool reuse_handler;
-
-      // true if no row retrieval phase is necessary.
-      bool is_covering;
-    } rowid_intersection;
-    struct {
-      TABLE *table;
-      Mem_root_array<AccessPath *> *children;
-      bool forced_by_hint;
-    } rowid_union;
-    struct {
-      TABLE *table;
-      unsigned index;
-      unsigned num_used_key_parts;
-      bool forced_by_hint;
-
-      // Large, and has nontrivial destructors, so split out into
-      // its own allocation.
-      IndexSkipScanParameters *param;
-    } index_skip_scan;
-    struct {
-      TABLE *table;
-      unsigned index;
-      unsigned num_used_key_parts;
-      bool forced_by_hint;
-
-      // Large, so split out into its own allocation.
-      GroupIndexSkipScanParameters *param;
-    } group_index_skip_scan;
-    struct {
-      TABLE *table;
-      QEP_TAB *qep_tab;  // Used only for buffering.
-    } dynamic_index_range_scan;
-    struct {
-      TABLE *table;
-      Table_function *table_function;
-      AccessPath *table_path;
-    } materialized_table_function;
-    struct {
-    } unqualified_count;
-
-    struct {
-      Mem_root_array<Item_values_column *> *output_refs;
-    } table_value_constructor;
-    struct {
-      // No members.
-    } fake_single_row;
-    struct {
-      // The child is optional. It is only used for keeping track of which
-      // tables are pruned away by this path, and it is only needed when this
-      // path is on the inner side of an outer join. See ZeroRowsIterator for
-      // details. The child of a ZERO_ROWS access path will not be visited by
-      // WalkAccessPaths(). It will be visited by WalkTablesUnderAccessPath()
-      // only if called with include_pruned_tables = true. No iterator is
-      // created for the child, and the child is not shown by EXPLAIN.
-      AccessPath *child;
-      // Used for EXPLAIN only.
-      // TODO(sgunders): make an enum.
-      const char *cause;
-    } zero_rows;
-    struct {
-      // Used for EXPLAIN only.
-      // TODO(sgunders): make an enum.
-      const char *cause;
-    } zero_rows_aggregated;
-
-    struct {
-      AccessPath *outer, *inner;
-      const JoinPredicate *join_predicate;
-      bool allow_spill_to_disk;
-      bool store_rowids;  // Whether we are below a weedout or not.
-      bool rewrite_semi_to_inner;
-      table_map tables_to_get_rowid_for;
-    } hash_join;
-    struct {
-      AccessPath *outer, *inner;
-      JoinType join_type;
-      unsigned mrr_length_per_rec;
-      float rec_per_key;
-      bool store_rowids;  // Whether we are below a weedout or not.
-      table_map tables_to_get_rowid_for;
-    } bka_join;
-    struct {
-      AccessPath *outer, *inner;
-      JoinType join_type;  // Somewhat redundant wrt. join_predicate.
-      bool pfs_batch_mode;
-      bool already_expanded_predicates;
-      const JoinPredicate *join_predicate;
-
-      // Equijoin filters to apply before the join, if any.
-      // Indexes into join_predicate->expr->equijoin_conditions.
-      // Non-equijoin conditions are always applied.
-      // If already_expanded_predicates is true, do not re-expand.
-      OverflowBitset equijoin_predicates;
-
-      // NOTE: Due to the nontrivial constructor on equijoin_predicates,
-      // this struct needs an initializer, or the union would not be
-      // default-constructible. If we need more than one union member
-      // with such an initializer, we would probably need to change
-      // equijoin_predicates into a uint64_t type-punned to an OverflowBitset.
-    } nested_loop_join = {nullptr, nullptr, JoinType::INNER, false, false,
-                          nullptr, {}};
-    struct {
-      AccessPath *outer, *inner;
-      const TABLE *table;
-      KEY *key;
-      size_t key_len;
-    } nested_loop_semijoin_with_duplicate_removal;
-
-    struct {
-      AccessPath *child;
-      Item *condition;
-
-      // This parameter, unlike nearly all others, is not passed to the the
-      // actual iterator. Instead, if true, it signifies that when creating
-      // the iterator, all materializable subqueries in “condition” should be
-      // materialized (with any in2exists condition removed first). In the
-      // very rare case that there are two or more such subqueries, this is
-      // an all-or-nothing decision, for simplicity.
-      //
-      // See FinalizeMaterializedSubqueries().
-      bool materialize_subqueries;
-    } filter;
-    struct {
-      AccessPath *child;
-      Filesort *filesort;
-      table_map tables_to_get_rowid_for;
-
-      // If filesort is nullptr: A new filesort will be created at the
-      // end of optimization, using this order and flags. Otherwise: Only
-      // used by EXPLAIN.
-      ORDER *order;
-      ha_rows limit;
-      bool remove_duplicates;
-      bool unwrap_rollup;
-      bool force_sort_rowids;
-    } sort;
-    struct {
-      AccessPath *child;
-      olap_type olap;
-    } aggregate;
-    struct {
-      AccessPath *subquery_path;
-      JOIN *join;
-      Temp_table_param *temp_table_param;
-      TABLE *table;
-      AccessPath *table_path;
-      int ref_slice;
-    } temptable_aggregate;
-    struct {
-      AccessPath *child;
-      ha_rows limit;
-      ha_rows offset;
-      bool count_all_rows;
-      bool reject_multiple_rows;
-      // Only used when the LIMIT is on a UNION with SQL_CALC_FOUND_ROWS.
-      // See Query_expression::send_records.
-      ha_rows *send_records_override;
-    } limit_offset;
-    struct {
-      AccessPath *child;
-      JOIN *join;
-      Temp_table_param *temp_table_param;
-      TABLE *table;
-      bool provide_rowid;
-      int ref_slice;
-    } stream;
-    struct {
-      // NOTE: The only legal access paths within table_path are
-      // TABLE_SCAN, REF, REF_OR_NULL, EQ_REF, ALTERNATIVE,
-      // CONST_TABLE (somewhat nonsensical), INDEX_SCAN and DYNAMIC_INDEX_SCAN
-      AccessPath *table_path;
-
-      // Large, and has nontrivial destructors, so split out
-      // into its own allocation.
-      MaterializePathParameters *param;
-      /** The total cost of executing the queries that we materialize.*/
-      double subquery_cost;
-      /// The number of materialized rows (as opposed to the number of rows
-      /// fetched by table_path). Needed for 'explain'.
-      double subquery_rows;
-    } materialize;
-    struct {
-      AccessPath *table_path;
-      Table_ref *table_list;
-      Item *condition;
-    } materialize_information_schema_table;
-    struct {
-      Mem_root_array<AppendPathParameters> *children;
-    } append;
-    struct {
-      AccessPath *child;
-      Window *window;
-      TABLE *temp_table;
-      Temp_table_param *temp_table_param;
-      int ref_slice;
-      bool needs_buffering;
-    } window;
-    struct {
-      AccessPath *child;
-      SJ_TMP_TABLE *weedout_table;
-      table_map tables_to_get_rowid_for;
-    } weedout;
-    struct {
-      using ItemSpan = std::span<Item *>;
-      AccessPath *child;
-
-      /// @cond IGNORE
-      // These functions somehow triggers a doxygen warning. (Presumably
-      // a doxygen bug.)
-      ItemSpan &group_items() {
-        return reinterpret_cast<ItemSpan &>(m_group_items);
-      }
-
-      const ItemSpan &group_items() const {
-        return reinterpret_cast<const ItemSpan &>(m_group_items);
-      }
-      /// @endcond
-
-     private:
-      // gcc 11 does not support a span as a union member. Replace this
-      // with "std::span<Item *> group_items" when we move to newer gcc version.
-      alignas(alignof(ItemSpan)) std::byte m_group_items[sizeof(ItemSpan)];
-    } remove_duplicates;
-    struct {
-      AccessPath *child;
-      TABLE *table;
-      KEY *key;
-      unsigned loosescan_key_len;
-    } remove_duplicates_on_index;
-    struct {
-      AccessPath *table_scan_path;
-
-      // For the ref.
-      AccessPath *child;
-      Index_lookup *used_ref;
-    } alternative;
-    struct {
-      AccessPath *child;
-      const char *name;
-    } cache_invalidator;
-    struct {
-      AccessPath *child;
-      table_map tables_to_delete_from;
-      table_map immediate_tables;
-    } delete_rows;
-    struct {
-      AccessPath *child;
-      table_map tables_to_update;
-      table_map immediate_tables;
-    } update_rows;
-  } u;
+  using Variant = std::variant<
+      TableScan, SampleScan, IndexScan, IndexDistanceScan, Ref, RefOrNull,
+      EqRef, PushedJoinRef, FullTextSearch, ConstTable, Mrr, FollowTail,
+      IndexRangeScan, IndexMerge, RowidIntersection, RowidUnion,
+      IndexSkipScan, GroupIndexSkipScan, DynamicIndexRangeScan,
+      TableValueConstructor, FakeSingleRow, ZeroRows, ZeroRowsAggregated,
+      MaterializedTableFunction, UnqualifiedCount, NestedLoopJoin,
+      NestedLoopSemijoinWithDuplicateRemoval, BkaJoin, HashJoin, Filter, Sort,
+      Aggregate, TemptableAggregate, LimitOffset, Stream, Materialize,
+      MaterializeInformationSchemaTable, Append, Window, Weedout,
+      RemoveDuplicates, RemoveDuplicatesOnIndex, Alternative, CacheInvalidator,
+      DeleteRows, UpdateRows>;
+  Variant u;
 };
 static_assert(std::is_trivially_destructible<AccessPath>::value,
               "AccessPath must be trivially destructible, as it is allocated "
               "on the MEM_ROOT and not wrapped in unique_ptr_destroy_only"
               "(because multiple candidates during planning could point to "
               "the same access paths, and refcounting would be expensive)");
-static_assert(sizeof(AccessPath) <= 144,
+static_assert(sizeof(AccessPath) <= 152,
               "We are creating a lot of access paths in the join "
               "optimizer, so be sure not to bloat it without noticing. "
-              "(96 bytes for the base, 48 bytes for the variant.)");
+              "(96 bytes for the base, 56 bytes for the std::variant "
+              "including its discriminant.)");
 
 inline void CopyBasicProperties(const AccessPath &from, AccessPath *to) {
   to->set_num_output_rows(from.num_output_rows());
@@ -1366,7 +1379,7 @@ inline void CopyBasicProperties(const AccessPath &from, AccessPath *to) {
 inline AccessPath *NewTableScanAccessPath(THD *thd, TABLE *table,
                                           bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::TABLE_SCAN;
+  path->init<AccessPath::TableScan>();
   path->count_examined_rows = count_examined_rows;
   path->table_scan().table = table;
   return path;
@@ -1376,7 +1389,7 @@ inline AccessPath *NewSampleScanAccessPath(THD *thd, TABLE *table,
                                            double sampling_percentage,
                                            bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::SAMPLE_SCAN;
+  path->init<AccessPath::SampleScan>();
   path->count_examined_rows = count_examined_rows;
   path->sample_scan().table = table;
   path->sample_scan().sampling_percentage = sampling_percentage;
@@ -1387,7 +1400,7 @@ inline AccessPath *NewIndexScanAccessPath(THD *thd, TABLE *table, int idx,
                                           bool use_order, bool reverse,
                                           bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::INDEX_SCAN;
+  path->init<AccessPath::IndexScan>();
   path->count_examined_rows = count_examined_rows;
   path->index_scan().table = table;
   path->index_scan().idx = idx;
@@ -1400,7 +1413,7 @@ inline AccessPath *NewRefAccessPath(THD *thd, TABLE *table, Index_lookup *ref,
                                     bool use_order, bool reverse,
                                     bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::REF;
+  path->init<AccessPath::Ref>();
   path->count_examined_rows = count_examined_rows;
   path->ref().table = table;
   path->ref().ref = ref;
@@ -1413,7 +1426,7 @@ inline AccessPath *NewRefOrNullAccessPath(THD *thd, TABLE *table,
                                           Index_lookup *ref, bool use_order,
                                           bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::REF_OR_NULL;
+  path->init<AccessPath::RefOrNull>();
   path->count_examined_rows = count_examined_rows;
   path->ref_or_null().table = table;
   path->ref_or_null().ref = ref;
@@ -1424,7 +1437,7 @@ inline AccessPath *NewRefOrNullAccessPath(THD *thd, TABLE *table,
 inline AccessPath *NewEQRefAccessPath(THD *thd, TABLE *table, Index_lookup *ref,
                                       bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::EQ_REF;
+  path->init<AccessPath::EqRef>();
   path->count_examined_rows = count_examined_rows;
   path->eq_ref().table = table;
   path->eq_ref().ref = ref;
@@ -1436,7 +1449,7 @@ inline AccessPath *NewPushedJoinRefAccessPath(THD *thd, TABLE *table,
                                               bool is_unique,
                                               bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::PUSHED_JOIN_REF;
+  path->init<AccessPath::PushedJoinRef>();
   path->count_examined_rows = count_examined_rows;
   path->pushed_join_ref().table = table;
   path->pushed_join_ref().ref = ref;
@@ -1451,7 +1464,7 @@ inline AccessPath *NewFullTextSearchAccessPath(THD *thd, TABLE *table,
                                                bool use_order, bool use_limit,
                                                bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::FULL_TEXT_SEARCH;
+  path->init<AccessPath::FullTextSearch>();
   path->count_examined_rows = count_examined_rows;
   path->full_text_search().table = table;
   path->full_text_search().ref = ref;
@@ -1465,7 +1478,7 @@ inline AccessPath *NewConstTableAccessPath(THD *thd, TABLE *table,
                                            Index_lookup *ref,
                                            bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::CONST_TABLE;
+  path->init<AccessPath::ConstTable>();
   path->count_examined_rows = count_examined_rows;
   path->set_num_output_rows(1.0);
   path->set_cost(0.0);
@@ -1479,7 +1492,7 @@ inline AccessPath *NewConstTableAccessPath(THD *thd, TABLE *table,
 inline AccessPath *NewMRRAccessPath(THD *thd, TABLE *table, Index_lookup *ref,
                                     int mrr_flags) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::MRR;
+  path->init<AccessPath::Mrr>();
   path->mrr().table = table;
   path->mrr().ref = ref;
   path->mrr().mrr_flags = mrr_flags;
@@ -1493,7 +1506,7 @@ inline AccessPath *NewMRRAccessPath(THD *thd, TABLE *table, Index_lookup *ref,
 inline AccessPath *NewFollowTailAccessPath(THD *thd, TABLE *table,
                                            bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::FOLLOW_TAIL;
+  path->init<AccessPath::FollowTail>();
   path->count_examined_rows = count_examined_rows;
   path->follow_tail().table = table;
   return path;
@@ -1502,7 +1515,7 @@ inline AccessPath *NewFollowTailAccessPath(THD *thd, TABLE *table,
 inline AccessPath *NewDynamicIndexRangeScanAccessPath(
     THD *thd, TABLE *table, QEP_TAB *qep_tab, bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::DYNAMIC_INDEX_RANGE_SCAN;
+  path->init<AccessPath::DynamicIndexRangeScan>();
   path->count_examined_rows = count_examined_rows;
   path->dynamic_index_range_scan().table = table;
   path->dynamic_index_range_scan().qep_tab = qep_tab;
@@ -1513,7 +1526,7 @@ inline AccessPath *NewMaterializedTableFunctionAccessPath(
     THD *thd, TABLE *table, Table_function *table_function,
     AccessPath *table_path) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::MATERIALIZED_TABLE_FUNCTION;
+  path->init<AccessPath::MaterializedTableFunction>();
   path->materialized_table_function().table = table;
   path->materialized_table_function().table_function = table_function;
   path->materialized_table_function().table_path = table_path;
@@ -1522,7 +1535,7 @@ inline AccessPath *NewMaterializedTableFunctionAccessPath(
 
 inline AccessPath *NewUnqualifiedCountAccessPath(THD *thd) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::UNQUALIFIED_COUNT;
+  path->init<AccessPath::UnqualifiedCount>();
   return path;
 }
 
@@ -1533,7 +1546,7 @@ inline AccessPath *NewNestedLoopSemiJoinWithDuplicateRemovalAccessPath(
     THD *thd, AccessPath *outer, AccessPath *inner, const TABLE *table,
     KEY *key, size_t key_len) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::NESTED_LOOP_SEMIJOIN_WITH_DUPLICATE_REMOVAL;
+  path->init<AccessPath::NestedLoopSemijoinWithDuplicateRemoval>();
   path->nested_loop_semijoin_with_duplicate_removal().outer = outer;
   path->nested_loop_semijoin_with_duplicate_removal().inner = inner;
   path->nested_loop_semijoin_with_duplicate_removal().table = table;
@@ -1547,7 +1560,7 @@ inline AccessPath *NewNestedLoopSemiJoinWithDuplicateRemovalAccessPath(
 inline AccessPath *NewFilterAccessPath(THD *thd, AccessPath *child,
                                        Item *condition) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::FILTER;
+  path->init<AccessPath::Filter>();
   path->filter().child = child;
   path->filter().condition = condition;
   path->filter().materialize_subqueries = false;
@@ -1563,7 +1576,7 @@ AccessPath *NewSortAccessPath(THD *thd, AccessPath *child, Filesort *filesort,
 inline AccessPath *NewAggregateAccessPath(THD *thd, AccessPath *child,
                                           olap_type olap) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::AGGREGATE;
+  path->init<AccessPath::Aggregate>();
   path->aggregate().child = child;
   path->aggregate().olap = olap;
   path->has_group_skip_scan = child->has_group_skip_scan;
@@ -1575,7 +1588,7 @@ inline AccessPath *NewTemptableAggregateAccessPath(
     Temp_table_param *temp_table_param, TABLE *table, AccessPath *table_path,
     int ref_slice) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::TEMPTABLE_AGGREGATE;
+  path->init<AccessPath::TemptableAggregate>();
   path->temptable_aggregate().subquery_path = subquery_path;
   path->temptable_aggregate().join = join;
   path->temptable_aggregate().temp_table_param = temp_table_param;
@@ -1592,7 +1605,7 @@ inline AccessPath *NewLimitOffsetAccessPath(THD *thd, AccessPath *child,
                                             ha_rows *send_records_override) {
   void EstimateLimitOffsetCost(AccessPath * path);
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::LIMIT_OFFSET;
+  path->init<AccessPath::LimitOffset>();
   path->immediate_update_delete_table = child->immediate_update_delete_table;
   path->limit_offset().child = child;
   path->limit_offset().limit = limit;
@@ -1608,7 +1621,7 @@ inline AccessPath *NewLimitOffsetAccessPath(THD *thd, AccessPath *child,
 inline AccessPath *NewFakeSingleRowAccessPath(THD *thd,
                                               bool count_examined_rows) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::FAKE_SINGLE_ROW;
+  path->init<AccessPath::FakeSingleRow>();
   path->count_examined_rows = count_examined_rows;
   path->set_num_output_rows(1.0);
   path->set_cost(0.0);
@@ -1620,7 +1633,7 @@ inline AccessPath *NewFakeSingleRowAccessPath(THD *thd,
 inline AccessPath *NewZeroRowsAccessPath(THD *thd, AccessPath *child,
                                          const char *cause) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::ZERO_ROWS;
+  path->init<AccessPath::ZeroRows>();
   path->zero_rows().child = child;
   path->zero_rows().cause = cause;
   path->set_num_output_rows(0.0);
@@ -1639,7 +1652,7 @@ inline AccessPath *NewZeroRowsAccessPath(THD *thd, const char *cause) {
 inline AccessPath *NewZeroRowsAggregatedAccessPath(THD *thd,
                                                    const char *cause) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::ZERO_ROWS_AGGREGATED;
+  path->init<AccessPath::ZeroRowsAggregated>();
   path->zero_rows_aggregated().cause = cause;
   path->set_num_output_rows(1.0);
   path->set_cost(0.0);
@@ -1652,7 +1665,7 @@ inline AccessPath *NewStreamingAccessPath(THD *thd, AccessPath *child,
                                           Temp_table_param *temp_table_param,
                                           TABLE *table, int ref_slice) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::STREAM;
+  path->init<AccessPath::Stream>();
   path->stream().child = child;
   path->stream().join = join;
   path->stream().temp_table_param = temp_table_param;
@@ -1719,7 +1732,7 @@ inline AccessPath *NewMaterializeAccessPath(
 #endif
 
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::MATERIALIZE;
+  path->init<AccessPath::Materialize>();
   path->materialize().table_path = table_path;
   path->materialize().param = param;
   path->materialize().subquery_cost = kUnknownCost;
@@ -1736,7 +1749,7 @@ inline AccessPath *NewMaterializeAccessPath(
 inline AccessPath *NewMaterializeInformationSchemaTableAccessPath(
     THD *thd, AccessPath *table_path, Table_ref *table_list, Item *condition) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::MATERIALIZE_INFORMATION_SCHEMA_TABLE;
+  path->init<AccessPath::MaterializeInformationSchemaTable>();
   path->materialize_information_schema_table().table_path = table_path;
   path->materialize_information_schema_table().table_list = table_list;
   path->materialize_information_schema_table().condition = condition;
@@ -1772,7 +1785,7 @@ inline double AddRowCount(double c1, double c2) {
 inline AccessPath *NewAppendAccessPath(
     THD *thd, Mem_root_array<AppendPathParameters> *children) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::APPEND;
+  path->init<AccessPath::Append>();
   path->append().children = children;
   double num_output_rows = kUnknownRowCount;
   for (const AppendPathParameters &child : *children) {
@@ -1792,7 +1805,7 @@ inline AccessPath *NewWindowAccessPath(THD *thd, AccessPath *child,
                                        Temp_table_param *temp_table_param,
                                        int ref_slice, bool needs_buffering) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::WINDOW;
+  path->init<AccessPath::Window>();
   path->window().child = child;
   path->window().window = window;
   path->window().temp_table = nullptr;
@@ -1806,7 +1819,7 @@ inline AccessPath *NewWindowAccessPath(THD *thd, AccessPath *child,
 inline AccessPath *NewWeedoutAccessPath(THD *thd, AccessPath *child,
                                         SJ_TMP_TABLE *weedout_table) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::WEEDOUT;
+  path->init<AccessPath::Weedout>();
   path->weedout().child = child;
   path->weedout().weedout_table = weedout_table;
   path->weedout().tables_to_get_rowid_for =
@@ -1817,7 +1830,7 @@ inline AccessPath *NewWeedoutAccessPath(THD *thd, AccessPath *child,
 inline AccessPath *NewRemoveDuplicatesAccessPath(
     THD *thd, AccessPath *child, std::span<Item *> group_items) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::REMOVE_DUPLICATES;
+  path->init<AccessPath::RemoveDuplicates>();
   path->remove_duplicates().child = child;
   path->remove_duplicates().group_items() = group_items;
   path->has_group_skip_scan = child->has_group_skip_scan;
@@ -1828,7 +1841,7 @@ inline AccessPath *NewRemoveDuplicatesOnIndexAccessPath(
     THD *thd, AccessPath *child, TABLE *table, KEY *key,
     unsigned loosescan_key_len) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::REMOVE_DUPLICATES_ON_INDEX;
+  path->init<AccessPath::RemoveDuplicatesOnIndex>();
   path->remove_duplicates_on_index().child = child;
   path->remove_duplicates_on_index().table = table;
   path->remove_duplicates_on_index().key = key;
@@ -1841,7 +1854,7 @@ inline AccessPath *NewAlternativeAccessPath(THD *thd, AccessPath *child,
                                             AccessPath *table_scan_path,
                                             Index_lookup *used_ref) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::ALTERNATIVE;
+  path->init<AccessPath::Alternative>();
   path->alternative().table_scan_path = table_scan_path;
   path->alternative().child = child;
   path->alternative().used_ref = used_ref;
@@ -1851,7 +1864,7 @@ inline AccessPath *NewAlternativeAccessPath(THD *thd, AccessPath *child,
 inline AccessPath *NewInvalidatorAccessPath(THD *thd, AccessPath *child,
                                             const char *name) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::CACHE_INVALIDATOR;
+  path->init<AccessPath::CacheInvalidator>();
   path->cache_invalidator().child = child;
   path->cache_invalidator().name = name;
   return path;

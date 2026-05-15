@@ -1175,7 +1175,7 @@ AccessPath *make_group_skip_scan_path(
 
   /* The query passes all tests, so construct a new AccessPath. */
   AccessPath *path = new (param->return_mem_root) AccessPath;
-  path->type = AccessPath::GROUP_INDEX_SKIP_SCAN;
+  path->init<AccessPath::GroupIndexSkipScan>();
   path->set_cost(group_skip_scan_info->cost.total_cost());
   path->set_num_output_rows(group_skip_scan_info->records);
   path->has_group_skip_scan = true;

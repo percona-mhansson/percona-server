@@ -872,7 +872,7 @@ AccessPath *CreateNestedLoopAccessPath(THD *thd, AccessPath *outer,
                                        AccessPath *inner, JoinType join_type,
                                        bool pfs_batch_mode) {
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::NESTED_LOOP_JOIN;
+  path->init<AccessPath::NestedLoopJoin>();
   path->nested_loop_join().outer = outer;
   path->nested_loop_join().inner = inner;
   path->nested_loop_join().join_type = join_type;
@@ -953,7 +953,7 @@ AccessPath *CreateBKAAccessPath(THD *thd, JOIN *join, AccessPath *outer_path,
   }
 
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::BKA_JOIN;
+  path->init<AccessPath::BkaJoin>();
   path->bka_join().outer = outer_path;
   path->bka_join().inner = inner_path;
   path->bka_join().join_type = join_type;
@@ -2314,7 +2314,7 @@ static AccessPath *CreateHashJoinAccessPath(
   pred->expr = expr;
 
   AccessPath *path = new (thd->mem_root) AccessPath;
-  path->type = AccessPath::HASH_JOIN;
+  path->init<AccessPath::HashJoin>();
   path->hash_join().outer = probe_path;
   path->hash_join().inner = build_path;
   path->hash_join().join_predicate = pred;

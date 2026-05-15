@@ -903,7 +903,7 @@ static AccessPath *get_ror_union_path(
       children->push_back(child);
     }
     AccessPath *path = new (param->return_mem_root) AccessPath;
-    path->type = AccessPath::ROWID_UNION;
+    path->init<AccessPath::RowidUnion>();
     path->set_cost(roru_total_cost);
     path->set_num_output_rows(roru_total_records);
     path->rowid_union().table = table;
@@ -1152,7 +1152,7 @@ static AccessPath *get_best_disjunct_quick(
 
     if (imerge_cost < read_cost || force_index_merge) {
       imerge_path = new (param->return_mem_root) AccessPath;
-      imerge_path->type = AccessPath::INDEX_MERGE;
+      imerge_path->init<AccessPath::IndexMerge>();
       imerge_path->index_merge().table = table;
       imerge_path->index_merge().forced_by_hint = force_index_merge;
       imerge_path->index_merge().allow_clustered_primary_key_scan = true;

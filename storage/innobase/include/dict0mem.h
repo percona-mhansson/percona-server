@@ -111,9 +111,10 @@ constexpr uint32_t DICT_VIRTUAL = 128;
 constexpr uint32_t DICT_SDI = 256;
 /** Multi-value index */
 constexpr uint32_t DICT_MULTI_VALUE = 512;
+constexpr uint32_t DICT_VECTOR = 1024;
 
 /** number of bits used for SYS_INDEXES.TYPE */
-constexpr uint32_t DICT_IT_BITS = 10;
+constexpr uint32_t DICT_IT_BITS = 11;
 /** @} */
 
 #if 0                         /* not implemented, retained for history */

@@ -2739,6 +2739,8 @@ bool store_create_info(THD *thd, Table_ref *table_list, String *packet,
       packet->append(STRING_WITH_LEN("FULLTEXT KEY "));
     else if (key_info->flags & HA_SPATIAL)
       packet->append(STRING_WITH_LEN("SPATIAL KEY "));
+    else if (key_info->flags & HA_VECTOR)
+      packet->append(STRING_WITH_LEN("VECTOR KEY "));
     else if (key_info->flags & HA_CLUSTERING)
       packet->append(STRING_WITH_LEN("CLUSTERING KEY "));
     else
@@ -2773,7 +2775,7 @@ bool store_create_info(THD *thd, Table_ref *table_list, String *packet,
       if (key_part->field &&
           (key_part->length !=
                table->field[key_part->fieldnr - 1]->key_length() &&
-           !(key_info->flags & (HA_FULLTEXT | HA_SPATIAL)))) {
+           !(key_info->flags & (HA_FULLTEXT | HA_SPATIAL | HA_VECTOR)))) {
         packet->append_parenthesized((long)key_part->length /
                                      key_part->field->charset()->mbmaxlen);
       }
@@ -5521,6 +5523,8 @@ static int get_schema_tmp_table_keys_record(THD *thd, Table_ref *tables,
       // INDEX_TYPE
       if (key_info->flags & HA_SPATIAL)
         str = "SPATIAL";
+      else if (key_info->flags & HA_VECTOR)
+        str = "VECTOR";
       else {
         const ha_key_alg key_alg = key_info->algorithm;
         /* If index algorithm is implicit get SE default. */

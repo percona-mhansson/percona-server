@@ -3231,7 +3231,7 @@ ha_innobase::ha_innobase(handlerton *hton, TABLE_SHARE *table_arg)
           HA_ATTACHABLE_TRX_COMPATIBLE | HA_CAN_INDEX_VIRTUAL_GENERATED_COLUMN |
           HA_DESCENDING_INDEX | HA_MULTI_VALUED_KEY_SUPPORT |
           HA_BLOB_PARTIAL_UPDATE | HA_SUPPORTS_GEOGRAPHIC_GEOMETRY_COLUMN |
-          HA_SUPPORTS_DEFAULT_EXPRESSION | HA_ONLINE_ANALYZE),
+          HA_SUPPORTS_DEFAULT_EXPRESSION | HA_ONLINE_ANALYZE | HA_CAN_VECTOR),
       m_start_of_scan(),
       m_stored_select_lock_type(LOCK_NONE_UNSET),
       m_mysql_has_locked() {}
@@ -5793,13 +5793,13 @@ static int innodb_init(void *p) {
   innobase_hton->lock_hton_log = innobase_lock_hton_log;
   innobase_hton->unlock_hton_log = innobase_unlock_hton_log;
   innobase_hton->collect_hton_log_info = innobase_collect_hton_log_info;
-  innobase_hton->flags = HTON_SUPPORTS_EXTENDED_KEYS |
-                         HTON_SUPPORTS_FOREIGN_KEYS | HTON_SUPPORTS_ATOMIC_DDL |
-                         HTON_CAN_RECREATE | HTON_SUPPORTS_SECONDARY_ENGINE |
-                         HTON_SUPPORTS_TABLE_ENCRYPTION |
-                         HTON_SUPPORTS_GENERATED_INVISIBLE_PK |
-                         HTON_SUPPORTS_BULK_LOAD | HTON_SUPPORTS_SQL_FK |
-                         HTON_SUPPORTS_ONLINE_BACKUPS | HTON_SUPPORTS_COMPRESSED_COLUMNS;
+  innobase_hton->flags =
+      HTON_SUPPORTS_EXTENDED_KEYS | HTON_SUPPORTS_FOREIGN_KEYS |
+      HTON_SUPPORTS_ATOMIC_DDL | HTON_CAN_RECREATE |
+      HTON_SUPPORTS_SECONDARY_ENGINE | HTON_SUPPORTS_TABLE_ENCRYPTION |
+      HTON_SUPPORTS_GENERATED_INVISIBLE_PK | HTON_SUPPORTS_BULK_LOAD |
+      HTON_SUPPORTS_SQL_FK | HTON_SUPPORTS_ONLINE_BACKUPS |
+      HTON_SUPPORTS_COMPRESSED_COLUMNS;
   // TODO(WL9440): to be enabled when distance scan is implemented in innodb.
   //| HTON_SUPPORTS_DISTANCE_SCAN;
 
@@ -8346,7 +8346,7 @@ int ha_innobase::open(const char *name, int, uint open_flags,
     dict_table_autoinc_unlock(ib_table);
   }
 
-  /* Set plugin parser for fulltext index */
+  /* Set plugin parser for fulltext index / handle vector index. */
   for (uint i = 0; i < table->s->keys; i++) {
     if (table->key_info[i].flags & HA_USES_PARSER) {
       dict_index_t *index = innobase_get_index(i);
@@ -11057,7 +11057,7 @@ int ha_innobase::index_read(
                                  : HA_ERR_TABLE_DEF_CHANGED;
   }
 
-  if (index->type & DICT_FTS) {
+  if (index->type & (DICT_FTS | DICT_VECTOR)) {
     return HA_ERR_KEY_NOT_FOUND;
   }
 
@@ -12841,6 +12841,8 @@ inline int create_index(
     ind_type = DICT_SPATIAL;
   } else if (key->flags & HA_FULLTEXT) {
     ind_type = DICT_FTS;
+  } else if (key->flags & HA_VECTOR) {
+    ind_type = DICT_VECTOR;
   }
 
   if (ind_type == DICT_SPATIAL) {
@@ -13002,6 +13004,7 @@ inline int create_index(
   }
 
   ut_ad(key->flags & HA_FULLTEXT || !(index->type & DICT_FTS));
+  ut_ad(key->flags & HA_VECTOR || !(index->type & DICT_VECTOR));
 
   multi_val_idx = ((index->type & DICT_MULTI_VALUE) == DICT_MULTI_VALUE);
 
@@ -14097,7 +14100,7 @@ bool create_table_info_t::innobase_table_flags() {
       if (fts_doc_id_index_bad) {
         goto index_bad;
       }
-    } else if (key->flags & HA_SPATIAL) {
+    } else if (key->flags & (HA_SPATIAL | HA_VECTOR)) {
       assert(~m_create_info->options &
              (HA_LEX_CREATE_TMP_TABLE | HA_LEX_CREATE_INTERNAL_TMP_TABLE));
     }
@@ -15763,12 +15766,19 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
             continue;
           case dd::Index::IT_FULLTEXT:
           case dd::Index::IT_SPATIAL:
+          case dd::Index::IT_VECTOR:
             ut_d(ut_error);
         }
         break;
       case dd::Index::IA_FULLTEXT:
         if (i->type() == dd::Index::IT_FULLTEXT) {
           has_fulltext = true;
+          continue;
+        }
+        ut_d(ut_error);
+        ut_o(break);
+      case dd::Index::IA_VECTOR:
+        if (i->type() == dd::Index::IT_VECTOR) {
           continue;
         }
         ut_d(ut_error);
@@ -15800,6 +15810,7 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
         case dd::Index::IT_MULTIPLE:
         case dd::Index::IT_FULLTEXT:
         case dd::Index::IT_SPATIAL:
+        case dd::Index::IT_VECTOR:
           my_error(ER_INNODB_FT_WRONG_DOCID_INDEX, MYF(0),
                    fts_doc_id_index->name().c_str());
           push_warning(thd, Sql_condition::SL_WARNING, ER_WRONG_NAME_FOR_INDEX,
@@ -18372,7 +18383,8 @@ void ha_innobase::info_low_key(uint flag, const dict_table_t *ib_table) {
     /* We do not maintain stats for fulltext or spatial indexes. Thus, we can't
     calculate pct_cached below because we need dict_index_t::stat_n_leaf_pages
     for that. See dict_stats_should_ignore_index(). */
-    if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL)) {
+    if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) ||
+        (key->flags & HA_VECTOR)) {
       pct_cached = IN_MEMORY_ESTIMATE_UNKNOWN;
     } else {
       pct_cached = index_pct_cached(index);
@@ -18390,7 +18402,8 @@ void ha_innobase::info_low_key(uint flag, const dict_table_t *ib_table) {
       }
 
       for (ulong j = 0; j < key->actual_key_parts; j++) {
-        if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL)) {
+        if ((key->flags & HA_FULLTEXT) || (key->flags & HA_SPATIAL) ||
+            (key->flags & HA_VECTOR)) {
           /* The record per key does not apply to FTS or Spatial indexes. */
           key->set_records_per_key(j, 1.0f);
           continue;
@@ -18716,7 +18729,7 @@ static bool innobase_get_index_column_cardinality(
       }
 
       DEBUG_SYNC(thd, "innodb.after_init_check");
-      if (index->type & (DICT_FTS | DICT_SPATIAL)) {
+      if (index->type & (DICT_FTS | DICT_SPATIAL | DICT_VECTOR)) {
         /* For these indexes innodb_rec_per_key is
         fixed as 1.0 */
         *cardinality = ib_table->stat_n_rows;

@@ -535,6 +535,7 @@ enum class SelectExecutedIn : bool { kPrimaryEngine, kSecondaryEngine };
   ANALYZE TABLE on it
 */
 #define HA_ONLINE_ANALYZE (1LL << 56)
+#define HA_CAN_VECTOR (1LL << 57)
 
 /*
   Bits in index_flags(index_number) for what you can do with index.
@@ -7055,16 +7056,16 @@ class handler {
     for details.
   */
   [[nodiscard]] int ha_fast_update(THD *thd,
-                                  mem_root_deque<Item *> &update_fields,
-                                  mem_root_deque<Item *> &update_values,
-                                  Item *conds);
+                                   mem_root_deque<Item *> &update_fields,
+                                   mem_root_deque<Item *> &update_values,
+                                   Item *conds);
 
   /**
     @brief Offload an upsert to the storage engine. See handler::upsert()
     for details.
   */
   [[nodiscard]] int ha_upsert(THD *thd, mem_root_deque<Item *> &update_fields,
-                             mem_root_deque<Item *> &update_values);
+                              mem_root_deque<Item *> &update_values);
 
  private:
   /**
@@ -7087,11 +7088,11 @@ class handler {
     handler::ha_update_row(...) does not accept conditions.
   */
   [[nodiscard]] virtual int fast_update(THD *thd [[maybe_unused]],
-                                       mem_root_deque<Item *> &update_fields
-                                       [[maybe_unused]],
-                                       mem_root_deque<Item *> &update_values
-                                       [[maybe_unused]],
-                                       Item *conds [[maybe_unused]]) {
+                                        mem_root_deque<Item *> &update_fields
+                                        [[maybe_unused]],
+                                        mem_root_deque<Item *> &update_values
+                                        [[maybe_unused]],
+                                        Item *conds [[maybe_unused]]) {
     return ENOTSUP;
   }
 
@@ -7112,10 +7113,10 @@ class handler {
     @return an error if the insert should be terminated.
   */
   [[nodiscard]] virtual int upsert(THD *thd [[maybe_unused]],
-                                  mem_root_deque<Item *> &update_fields
-                                  [[maybe_unused]],
-                                  mem_root_deque<Item *> &update_values
-                                  [[maybe_unused]]) {
+                                   mem_root_deque<Item *> &update_fields
+                                   [[maybe_unused]],
+                                   mem_root_deque<Item *> &update_values
+                                   [[maybe_unused]]) {
     return ENOTSUP;
   }
 

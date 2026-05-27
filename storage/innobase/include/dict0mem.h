@@ -1208,6 +1208,9 @@ struct dict_index_t {
   bool hidden;
 #endif /* !UNIV_HOTBACKUP */
 
+  /** true if this is a vector index according to DD metadata */
+  bool is_vector_index;
+
   /** list of indexes of the table */
   UT_LIST_NODE_T(dict_index_t) indexes;
 
@@ -1335,6 +1338,17 @@ struct dict_index_t {
     ut_ad(magic_n == DICT_INDEX_MAGIC_N);
 
     return (type & DICT_MULTI_VALUE);
+  }
+
+  /**
+    Check whether the index is a vector index.
+
+    @return true if the index is a vector index, false otherwise
+  */
+  [[nodiscard]] bool is_vector() const {
+    ut_ad(magic_n == DICT_INDEX_MAGIC_N);
+
+    return (is_vector_index);
   }
 
   /** Returns the minimum data size of an index record.

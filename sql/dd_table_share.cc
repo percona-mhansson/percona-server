@@ -1414,6 +1414,10 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
   }
 
   // flags
+  constexpr auto kLegacyItVector = static_cast<dd::Index::enum_index_type>(6);
+  if (idx_obj->type() == kLegacyItVector) {
+    keyinfo->flags = HA_VECTOR;
+  } else {
   switch (idx_obj->type()) {
     case dd::Index::IT_MULTIPLE:
       keyinfo->flags = 0;
@@ -1428,13 +1432,11 @@ static bool fill_index_from_dd(THD *thd, TABLE_SHARE *share,
     case dd::Index::IT_UNIQUE:
       keyinfo->flags = HA_NOSAME;
       break;
-    case dd::Index::IT_VECTOR:
-      keyinfo->flags = HA_VECTOR;
-      break;
     default:
       assert(0); /* purecov: deadcode */
       keyinfo->flags = 0;
       break;
+  }
   }
 
   if (has_vector_column && keyinfo->user_defined_key_parts == 1) {

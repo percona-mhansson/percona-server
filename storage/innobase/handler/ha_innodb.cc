@@ -15713,9 +15713,11 @@ static bool dd_is_only_column(const dd::Index *index,
 static bool dd_is_vector_index(const dd::Index *index) {
   constexpr auto kLegacyIaVector =
       static_cast<dd::Index::enum_index_algorithm>(6);
+  constexpr auto kLegacyItVector =
+      static_cast<dd::Index::enum_index_type>(6);
 
   if (index->algorithm() == kLegacyIaVector ||
-      index->type() == dd::Index::IT_VECTOR) {
+      index->type() == kLegacyItVector) {
     return true;
   }
 
@@ -15805,7 +15807,6 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
             continue;
           case dd::Index::IT_FULLTEXT:
           case dd::Index::IT_SPATIAL:
-          case dd::Index::IT_VECTOR:
             ut_d(ut_error);
         }
         break;
@@ -15828,6 +15829,8 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
         dd_find_column(dd_table, FTS_DOC_ID_COL_NAME);
 
     if (fts_doc_id_index) {
+      constexpr auto kLegacyItVector =
+          static_cast<dd::Index::enum_index_type>(6);
       switch (fts_doc_id_index->type()) {
         case dd::Index::IT_PRIMARY:
           /* PRIMARY!=FTS_DOC_ID_INDEX */
@@ -15843,7 +15846,6 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
         case dd::Index::IT_MULTIPLE:
         case dd::Index::IT_FULLTEXT:
         case dd::Index::IT_SPATIAL:
-        case dd::Index::IT_VECTOR:
           my_error(ER_INNODB_FT_WRONG_DOCID_INDEX, MYF(0),
                    fts_doc_id_index->name().c_str());
           push_warning(thd, Sql_condition::SL_WARNING, ER_WRONG_NAME_FOR_INDEX,
@@ -15853,6 +15855,17 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
                        ") for "
                        " FULLTEXT Document ID indexing.");
           return ER_INNODB_FT_WRONG_DOCID_INDEX;
+      }
+      if (fts_doc_id_index->type() == kLegacyItVector) {
+        my_error(ER_INNODB_FT_WRONG_DOCID_INDEX, MYF(0),
+                 fts_doc_id_index->name().c_str());
+        push_warning(thd, Sql_condition::SL_WARNING, ER_WRONG_NAME_FOR_INDEX,
+                     " InnoDB: Index name " FTS_DOC_ID_INDEX_NAME
+                     " is reserved"
+                     " for UNIQUE INDEX(" FTS_DOC_ID_COL_NAME
+                     ") for "
+                     " FULLTEXT Document ID indexing.");
+        return ER_INNODB_FT_WRONG_DOCID_INDEX;
       }
       ut_ad(fts_doc_id);
     }

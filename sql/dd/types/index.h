@@ -61,8 +61,7 @@ class Index : virtual public Entity_object {
     IT_UNIQUE,
     IT_MULTIPLE,
     IT_FULLTEXT,
-    IT_SPATIAL,
-    IT_VECTOR
+    IT_SPATIAL
   };
 
   enum enum_index_algorithm  // similar to ha_key_alg

@@ -5435,6 +5435,19 @@ static int fill_schema_engines(THD *thd, Table_ref *tables, Item *) {
 #define TMP_TABLE_KEYS_IS_VISIBLE 14
 #define TMP_TABLE_KEYS_EXPRESSION 15
 
+/** Detect vector indexes for SHOW INDEX output.
+@param[in] key_info index metadata from TABLE_SHARE
+@return whether this is a vector index */
+static bool is_show_index_vector_type(const KEY *key_info) {
+  if (key_info->flags & HA_VECTOR) return true;
+
+  if (key_info->user_defined_key_parts != 1) return false;
+
+  const KEY_PART_INFO *key_part = key_info->key_part;
+  return key_part != nullptr && key_part->field != nullptr &&
+         key_part->field->real_type() == MYSQL_TYPE_VECTOR;
+}
+
 static int get_schema_tmp_table_keys_record(THD *thd, Table_ref *tables,
                                             TABLE *table, bool res, LEX_CSTRING,
                                             LEX_CSTRING table_name) {
@@ -5523,7 +5536,7 @@ static int get_schema_tmp_table_keys_record(THD *thd, Table_ref *tables,
       // INDEX_TYPE
       if (key_info->flags & HA_SPATIAL)
         str = "SPATIAL";
-      else if (key_info->flags & HA_VECTOR)
+      else if (is_show_index_vector_type(key_info))
         str = "VECTOR";
       else {
         const ha_key_alg key_alg = key_info->algorithm;

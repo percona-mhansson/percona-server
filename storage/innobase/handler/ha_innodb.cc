@@ -15707,6 +15707,38 @@ static bool dd_is_only_column(const dd::Index *index,
           &(*index->elements().begin())->column() == column);
 }
 
+/** Check if an index uses marker-based vector metadata.
+@param[in]      index   data dictionary index
+@return whether the index is a vector index */
+static bool dd_is_vector_index(const dd::Index *index) {
+  if (index->algorithm() == dd::Index::IA_VECTOR ||
+      index->type() == dd::Index::IT_VECTOR) {
+    return true;
+  }
+
+  if (index->algorithm() != dd::Index::IA_SE_SPECIFIC ||
+      index->type() != dd::Index::IT_MULTIPLE) {
+    return false;
+  }
+
+  uint visible_elements = 0;
+  for (const dd::Index_element *elem : index->elements()) {
+    if (elem->is_hidden()) continue;
+
+    visible_elements++;
+
+    const dd::Properties &col_options = elem->column().options();
+    bool is_vector_column = false;
+    if (col_options.exists("vector_index") &&
+        !col_options.get("vector_index", &is_vector_column) &&
+        is_vector_column) {
+      return visible_elements == 1;
+    }
+  }
+
+  return false;
+}
+
 /** Add hidden columns and indexes to an InnoDB table definition.
 @param[in,out]  dd_table        data dictionary cache object
 @return error number
@@ -15736,6 +15768,9 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
 
     switch (i->algorithm()) {
       case dd::Index::IA_SE_SPECIFIC:
+        if (dd_is_vector_index(i)) {
+          continue;
+        }
         ut_d(ut_error);
         ut_o(break);
       case dd::Index::IA_HASH:
@@ -15778,7 +15813,7 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
         ut_d(ut_error);
         ut_o(break);
       case dd::Index::IA_VECTOR:
-        if (i->type() == dd::Index::IT_VECTOR) {
+        if (dd_is_vector_index(i)) {
           continue;
         }
         ut_d(ut_error);

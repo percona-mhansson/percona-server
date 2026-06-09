@@ -212,6 +212,10 @@ enum_field_types dd_get_old_field_type(dd::enum_column_types type) {
 /** For enum in dd::Index */
 static enum ha_key_alg dd_get_old_index_algorithm_type(
     dd::Index::enum_index_algorithm type) {
+  constexpr auto kLegacyIaVector =
+      static_cast<dd::Index::enum_index_algorithm>(6);
+  if (type == kLegacyIaVector) return HA_KEY_ALG_VECTOR;
+
   switch (type) {
     case dd::Index::IA_SE_SPECIFIC:
       return HA_KEY_ALG_SE_SPECIFIC;
@@ -227,9 +231,6 @@ static enum ha_key_alg dd_get_old_index_algorithm_type(
 
     case dd::Index::IA_FULLTEXT:
       return HA_KEY_ALG_FULLTEXT;
-
-    case dd::Index::IA_VECTOR:
-      return HA_KEY_ALG_VECTOR;
 
     default:
       assert(!"Should not hit here"); /* purecov: deadcode */

@@ -62,8 +62,7 @@ Indexes::Indexes() {
                          "  'UNIQUE',\n"
                          "  'MULTIPLE',\n"
                          "  'FULLTEXT',\n"
-                         "  'SPATIAL',\n"
-                         "  'VECTOR'\n"
+                         "  'SPATIAL'\n"
                          ") NOT NULL");
   m_target_def.add_field(FIELD_ALGORITHM, "FIELD_ALGORITHM",
                          "algorithm ENUM(\n"
@@ -71,8 +70,7 @@ Indexes::Indexes() {
                          "  'BTREE',\n"
                          "  'RTREE',\n"
                          "  'HASH',\n"
-                         "  'FULLTEXT',\n"
-                         "  'VECTOR'\n"
+                         "  'FULLTEXT'\n"
                          ") NOT NULL");
   m_target_def.add_field(FIELD_IS_ALGORITHM_EXPLICIT,
                          "FIELD_IS_ALGORITHM_EXPLICIT",

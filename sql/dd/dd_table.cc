@@ -818,7 +818,7 @@ static dd::Index::enum_index_algorithm dd_get_new_index_algorithm_type(
       return dd::Index::IA_FULLTEXT;
 
     case HA_KEY_ALG_VECTOR:
-      return dd::Index::IA_VECTOR;
+      return dd::Index::IA_SE_SPECIFIC;
   }
 
   /* purecov: begin deadcode */

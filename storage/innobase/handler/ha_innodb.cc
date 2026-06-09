@@ -15711,7 +15711,10 @@ static bool dd_is_only_column(const dd::Index *index,
 @param[in]      index   data dictionary index
 @return whether the index is a vector index */
 static bool dd_is_vector_index(const dd::Index *index) {
-  if (index->algorithm() == dd::Index::IA_VECTOR ||
+  constexpr auto kLegacyIaVector =
+      static_cast<dd::Index::enum_index_algorithm>(6);
+
+  if (index->algorithm() == kLegacyIaVector ||
       index->type() == dd::Index::IT_VECTOR) {
     return true;
   }
@@ -15766,11 +15769,12 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
       fts_doc_id_index = i;
     }
 
+    if (dd_is_vector_index(i)) {
+      continue;
+    }
+
     switch (i->algorithm()) {
       case dd::Index::IA_SE_SPECIFIC:
-        if (dd_is_vector_index(i)) {
-          continue;
-        }
         ut_d(ut_error);
         ut_o(break);
       case dd::Index::IA_HASH:
@@ -15808,12 +15812,6 @@ int ha_innobase::get_extra_columns_and_keys(const HA_CREATE_INFO *,
       case dd::Index::IA_FULLTEXT:
         if (i->type() == dd::Index::IT_FULLTEXT) {
           has_fulltext = true;
-          continue;
-        }
-        ut_d(ut_error);
-        ut_o(break);
-      case dd::Index::IA_VECTOR:
-        if (dd_is_vector_index(i)) {
           continue;
         }
         ut_d(ut_error);

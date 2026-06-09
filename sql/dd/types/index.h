@@ -71,8 +71,7 @@ class Index : virtual public Entity_object {
     IA_BTREE,
     IA_RTREE,
     IA_HASH,
-    IA_FULLTEXT,
-    IA_VECTOR
+    IA_FULLTEXT
   };
 
  public:

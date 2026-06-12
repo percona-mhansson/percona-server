@@ -530,7 +530,8 @@ class PT_table_sequence_function : public PT_table_reference {
   typedef PT_table_reference super;
 
  public:
-  PT_table_sequence_function(const POS &pos, Item *expr, const LEX_CSTRING &table_alias)
+  PT_table_sequence_function(const POS &pos, Item *expr,
+                             const LEX_CSTRING &table_alias)
       : super(pos), m_expr(expr), m_table_alias(table_alias) {}
 
   bool do_contextualize(Parse_context *pc) override;
@@ -2507,7 +2508,27 @@ typedef PT_traceable_index_option<ha_key_alg, &KEY_CREATE_INFO::algorithm,
                                   &KEY_CREATE_INFO::is_algorithm_explicit>
     PT_index_type;
 
-class PT_create_index_stmt final : public PT_table_ddl_stmt_base {
+/**
+  A single key=value parameter in an index construction clause.
+*/
+class PT_index_construction_parameter : public Parse_tree_node {
+ public:
+  PT_index_construction_parameter(const POS &pos, const LEX_STRING &key,
+                                  const LEX_STRING &value)
+      : Parse_tree_node(pos), m_key(key), m_value(value) {}
+
+  const LEX_STRING &key() const { return m_key; }
+  const LEX_STRING &value() const { return m_value; }
+
+ private:
+  LEX_STRING m_key;
+  LEX_STRING m_value;
+};
+
+using Index_construction_parameters =
+    Mem_root_array_YY<PT_index_construction_parameter *>;
+
+    class PT_create_index_stmt final : public PT_table_ddl_stmt_base {
  public:
   PT_create_index_stmt(const POS &pos, MEM_ROOT *mem_root, keytype type_par,
                        const LEX_STRING &name_arg, PT_base_index_option *type,
@@ -2515,7 +2536,9 @@ class PT_create_index_stmt final : public PT_table_ddl_stmt_base {
                        List<PT_key_part_specification> *cols,
                        Index_options options,
                        Alter_info::enum_alter_table_algorithm algo,
-                       Alter_info::enum_alter_table_lock lock)
+                       Alter_info::enum_alter_table_lock lock,
+                       Index_construction_parameters construction_params =
+                           Index_construction_parameters{})
       : PT_table_ddl_stmt_base(pos, mem_root),
         m_keytype(type_par),
         m_name(name_arg),
@@ -2524,7 +2547,8 @@ class PT_create_index_stmt final : public PT_table_ddl_stmt_base {
         m_columns(cols),
         m_options(options),
         m_algo(algo),
-        m_lock(lock) {}
+        m_lock(lock),
+        m_construction_params(construction_params) {}
 
   Sql_cmd *make_cmd(THD *thd) override;
 
@@ -2537,6 +2561,7 @@ class PT_create_index_stmt final : public PT_table_ddl_stmt_base {
   Index_options m_options;
   const Alter_info::enum_alter_table_algorithm m_algo;
   const Alter_info::enum_alter_table_lock m_lock;
+  Index_construction_parameters m_construction_params;
 };
 
 /**

@@ -207,6 +207,11 @@ class Key_part_spec {
   bool m_has_expression;
 };
 
+struct IndexConstructionParam {
+  LEX_CSTRING key;
+  LEX_CSTRING value;
+};
+
 class Key_spec {
  public:
   const keytype type;
@@ -221,6 +226,7 @@ class Key_spec {
     associated with it was dropped.
   */
   const bool check_for_duplicate_indexes;
+  Mem_root_array<IndexConstructionParam> construction_params;
 
   Key_spec(MEM_ROOT *mem_root, keytype type_par, const LEX_CSTRING &name_arg,
            const KEY_CREATE_INFO *key_info_arg, bool generated_arg,
@@ -230,7 +236,8 @@ class Key_spec {
         columns(mem_root),
         name(name_arg),
         generated(generated_arg),
-        check_for_duplicate_indexes(check_for_duplicate_indexes_arg) {
+        check_for_duplicate_indexes(check_for_duplicate_indexes_arg),
+        construction_params(mem_root) {
     columns.reserve(cols.elements);
     List_iterator<Key_part_spec> it(cols);
     Key_part_spec *column;

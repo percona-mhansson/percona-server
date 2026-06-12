@@ -2156,7 +2156,9 @@ bool PT_intersect::do_contextualize(Parse_context *pc [[maybe_unused]]) {
 static bool setup_index(keytype key_type, const LEX_STRING name,
                         PT_base_index_option *type,
                         List<PT_key_part_specification> *columns,
-                        Index_options options, Table_ddl_parse_context *pc) {
+                        Index_options options, Table_ddl_parse_context *pc,
+                        Index_construction_parameters construction_params =
+                            Index_construction_parameters{}) {
   *pc->key_create_info = default_key_create_info;
 
   if (type != nullptr && type->contextualize(pc)) return true;
@@ -2199,6 +2201,13 @@ static bool setup_index(keytype key_type, const LEX_STRING name,
                                   pc->key_create_info, false, true, cols);
   if (key == nullptr || pc->alter_info->key_list.push_back(key)) return true;
 
+  for (const PT_index_construction_parameter *param : construction_params) {
+    if (param == nullptr) return true;
+    IndexConstructionParam p{to_lex_cstring(param->key()),
+                               to_lex_cstring(param->value())};
+    if (key->construction_params.push_back(p)) return true;
+  }
+
   return false;
 }
 
@@ -2217,7 +2226,8 @@ Sql_cmd *PT_create_index_stmt::make_cmd(THD *thd) {
 
   m_alter_info.flags = Alter_info::ALTER_ADD_INDEX;
 
-  if (setup_index(m_keytype, m_name, m_type, m_columns, m_options, &pc))
+  if (setup_index(m_keytype, m_name, m_type, m_columns, m_options, &pc,
+                  m_construction_params))
     return nullptr;
 
   m_alter_info.requested_algorithm = m_algo;

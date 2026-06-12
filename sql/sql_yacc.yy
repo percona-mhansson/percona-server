@@ -2143,6 +2143,11 @@ CHARSET_INFO *warn_on_deprecated_user_defined_collation(
           fulltext_index_options opt_spatial_index_options spatial_index_options
           opt_vector_index_options vector_index_options
 
+%type <index_construction_parameter> index_construction_parameter
+
+%type <index_construction_parameters> opt_index_construction_clause
+          index_construction_clause index_construction_parameter_list
+
 %type <opt_index_lock_and_algorithm> opt_index_lock_and_algorithm
 
 %type <index_option> index_option common_index_option fulltext_index_option
@@ -3590,11 +3595,50 @@ create_index_stmt:
           }
         | CREATE VECTOR_SYM INDEX_SYM ident ON_SYM table_ident
           '(' key_list_with_expression ')' opt_index_lock_and_algorithm opt_index_options
+          opt_index_construction_clause
           {
             $$= NEW_PTN PT_create_index_stmt(@$, YYMEM_ROOT, KEYTYPE_VECTOR, $4,
                                              nullptr, $6, $8, $11,
                                              $10.algo.get_or_default(),
-                                             $10.lock.get_or_default());
+                                             $10.lock.get_or_default(), $12);
+          }
+        ;
+
+opt_index_construction_clause:
+          %empty { $$.init(YYMEM_ROOT); }
+        | index_construction_clause
+        ;
+
+index_construction_clause:
+          WITH '(' index_construction_parameter_list ')'
+          {
+            $$= $3;
+          }
+        ;
+
+index_construction_parameter_list:
+          index_construction_parameter
+          {
+            $$.init(YYMEM_ROOT);
+            if ($$.push_back($1))
+              MYSQL_YYABORT; // OOM
+          }
+        | index_construction_parameter_list ',' index_construction_parameter
+          {
+            $$= $1;
+            if ($$.push_back($3))
+              MYSQL_YYABORT; // OOM
+          }
+        ;
+
+index_construction_parameter:
+          IDENT_QUOTED EQ IDENT_QUOTED
+          {
+            $$= NEW_PTN PT_index_construction_parameter(@$, $1, $3);
+          }
+        | IDENT_QUOTED EQ NUM
+          {
+            $$= NEW_PTN PT_index_construction_parameter(@$, $1, $3);
           }
         ;
 
@@ -8231,6 +8275,7 @@ index_type:
           BTREE_SYM { $$= HA_KEY_ALG_BTREE; }
         | RTREE_SYM { $$= HA_KEY_ALG_RTREE; }
         | HASH_SYM  { $$= HA_KEY_ALG_HASH; }
+        | IDENT_QUOTED { $$= HA_KEY_ALG_HASH; }
         ;
 
 key_list:

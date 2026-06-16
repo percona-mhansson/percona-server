@@ -27,11 +27,18 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "vec0vec.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <string>
 #include <variant>
 
 // ut0ut.h isn't self-contained.
+#include "handler.h"
+#include "lex_string.h"
+#include "my_base.h"
+#include "mysql/strings/m_ctype.h"
+#include "mysqld_cs.h"
 #include "ut0mem.h"
 #include "ut0test.h"
 #include "ut0ut.h"
@@ -41,6 +48,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <rapidjson/schema.h>
 #include <rapidjson/stringbuffer.h>
 
+#include "key_spec.h"
 #include "my_sys.h"
 #include "mysqld_error.h"
 
@@ -51,7 +59,30 @@ using rapidjson::SchemaValidator;
 
 namespace storage::innobase::vec0vec {
 
-bool validate_options(string_view opts) {
+bool validate_options(const Key_spec &index_def) {
+  if (index_def.key_create_info.algorithm == HA_KEY_ALG_SE_SPECIFIC) {
+    if (my_strcasecmp(system_charset_info,
+                      index_def.key_create_info.comment.str, "HNSW") == 0) {
+      for (const IndexConstructionParam &p : index_def.construction_params) {
+        if (my_strcasecmp(system_charset_info, p.key.str, "M") == 0) {
+          if (!std::all_of(p.value.str, p.value.str + p.value.length,
+                           [](auto c) { return std::isdigit(c); })) {
+            my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER_VALUE, MYF(0),
+                     p.value.str);
+            return true;
+          }
+        } else {
+          my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER, MYF(0), p.key.str);
+          return true;
+        }
+      }
+      return false;
+    }
+    my_error(ER_INDEX_TYPE_NOT_SUPPORTED_FOR_VECTOR_INDEX, MYF(0),
+             index_def.key_create_info.comment.str);
+    return true;
+  }
+
   Document schema_doc;
   schema_doc.Parse(schema_json);
   assert(!schema_doc.HasParseError());
@@ -59,6 +90,8 @@ bool validate_options(string_view opts) {
   SchemaDocument schema(schema_doc);
   SchemaValidator validator(schema);
 
+  auto opts =
+      to_string_view(index_def.key_create_info.m_secondary_engine_attribute);
   Document doc;
   doc.Parse(opts.data(), opts.length());
 
@@ -74,43 +107,6 @@ bool validate_options(string_view opts) {
   }
 
   return false;
-}
-
-VectorIndexParam parse_options(string_view opts) {
-  if (opts.empty()) {
-    return std::monostate{};
-  }
-
-  Document schema_doc;
-  schema_doc.Parse(schema_json);
-  assert(!schema_doc.HasParseError());
-
-  SchemaDocument schema(schema_doc);
-  SchemaValidator validator(schema);
-
-  Document doc;
-  auto &gendoc = doc.Parse(opts.data(), opts.length());
-
-  if (validate_options(opts)) {
-    ib::warn(ER_IB_MSG_466) << "Vector table index options validation failed, "
-                               "using default values. Options: "
-                            << opts;
-  }
-
-  auto get_or_default = [&gendoc](const char *key, auto &member) {
-    if (gendoc.HasMember(key)) {
-      member = gendoc[key].GetInt();
-    }
-  };
-
-  // since there's only HNSW for now.
-  HnswParam param;
-
-  get_or_default("M", param.M);
-  get_or_default("max_elements", param.max_elements);
-  get_or_default("ef_construction", param.ef_construction);
-
-  return param;
 }
 
 }  // namespace storage::innobase::vec0vec

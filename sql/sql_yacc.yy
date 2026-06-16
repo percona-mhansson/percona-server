@@ -8185,6 +8185,7 @@ vector_index_options:
 
 vector_index_option:
           common_index_option
+        | index_type_clause { $$= $1; }
         ;
 
 opt_index_options:
@@ -8264,6 +8265,7 @@ opt_index_type_clause:
 index_type_clause:
           USING index_type    { $$= NEW_PTN PT_index_type(@$, $2); }
         | TYPE_SYM index_type { $$= NEW_PTN PT_index_type(@$, $2); }
+        | TYPE_SYM IDENT_sys { $$= NEW_PTN PT_index_comment(@$, to_lex_cstring($2)); }
         ;
 
 visibility:
@@ -8275,8 +8277,7 @@ index_type:
           BTREE_SYM { $$= HA_KEY_ALG_BTREE; }
         | RTREE_SYM { $$= HA_KEY_ALG_RTREE; }
         | HASH_SYM  { $$= HA_KEY_ALG_HASH; }
-        | IDENT_QUOTED { $$= HA_KEY_ALG_HASH; }
-        ;
+       ;
 
 key_list:
           key_list ',' key_part
@@ -11132,11 +11133,11 @@ opt_jdv_table_tags:
 jdv_table_tag:
           INSERT_SYM           { $$ = jdv::DVT_INSERT; }
         | UPDATE_SYM           { $$ = jdv::DVT_UPDATE; }
-        | DELETE_SYM           { $$ = jdv::DVT_DELETE; }      
+        | DELETE_SYM           { $$ = jdv::DVT_DELETE; }
         | NO_SYM INSERT_SYM    { $$ = jdv::DVT_NOINSERT; }
         | NO_SYM UPDATE_SYM    { $$ = jdv::DVT_NOUPDATE; }
         | NO_SYM DELETE_SYM    { $$ = jdv::DVT_NODELETE; }
-        ;   
+        ;
 
 jdv_table_tags:
         jdv_table_tag { $$= $1; }
@@ -11151,7 +11152,7 @@ jdv_table_tags:
               ($3 == jdv::DVT_NOUPDATE && $$ & jdv::DVT_UPDATE) ||
               ($3 == jdv::DVT_DELETE && $$ & jdv::DVT_NODELETE) ||
               ($3 == jdv::DVT_NODELETE && $$ & jdv::DVT_DELETE)
-            )) 
+            ))
             {
                 my_error(ER_JDV_INVALID_DEFINITION_WRONG_ANNOTATIONS, MYF(0));
                 MYSQL_YYABORT;

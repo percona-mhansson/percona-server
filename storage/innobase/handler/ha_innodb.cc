@@ -4858,11 +4858,9 @@ static bool innobase_validate_engine_attributes(THD *thd, const char *db_name,
                                                 HA_CREATE_INFO *create_info,
                                                 const Alter_info *alter_info) {
   for (const auto *key : alter_info->key_list) {
-    auto opts =
-        to_string_view(key->key_create_info.m_secondary_engine_attribute);
     switch (key->type) {
       case KEYTYPE_VECTOR:
-        return storage::innobase::vec0vec::validate_options(opts);
+        return storage::innobase::vec0vec::validate_options(*key);
         break;
       default:
         break;

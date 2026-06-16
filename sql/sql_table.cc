@@ -7776,6 +7776,21 @@ static bool prepare_key(
   assert((key_info->flags & flags_before_switch) == flags_before_switch);
   if (key->generated) key_info->flags |= HA_GENERATED_KEY;
 
+  // Serialize vector index construction params (WITH clause).
+  if (!key->construction_params.empty()) {
+    String buf;
+    for (size_t i = 0; i < key->construction_params.size(); i++) {
+      if (i > 0) buf.append(',');
+      const auto &p = key->construction_params[i];
+      buf.append(p.key.str, p.key.length);
+      buf.append('=');
+      buf.append(p.value.str, p.value.length);
+    }
+    key_info->vector_construction_params.str =
+        strmake_root(thd->mem_root, buf.ptr(), buf.length());
+    key_info->vector_construction_params.length = buf.length();
+  }
+
   key_info->algorithm = key->key_create_info.algorithm;
   key_info->user_defined_key_parts = key->columns.size();
   key_info->actual_key_parts = key_info->user_defined_key_parts;

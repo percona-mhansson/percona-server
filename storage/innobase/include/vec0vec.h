@@ -29,6 +29,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <string_view>
 #include <variant>
+#include "key_spec.h"
 
 namespace storage::innobase::vec0vec {
 
@@ -46,7 +47,7 @@ static const constexpr auto schema_json = R"(
 }
 )";
 
-bool validate_options(std::string_view opts);
+bool validate_options(const Key_spec &index_def);
 
 struct HnswParam {
   int M{25};
@@ -56,6 +57,6 @@ struct HnswParam {
 
 using VectorIndexParam = std::variant<std::monostate, HnswParam>;
 
-VectorIndexParam parse_options(std::string_view opts);
+//VectorIndexParam parse_options(std::string_view opts);
 
 }  // namespace storage::innobase::vec0vec

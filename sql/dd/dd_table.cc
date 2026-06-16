@@ -1132,6 +1132,12 @@ static void fill_dd_indexes_from_keyinfo(
       idx_options->set("clustering_key", true);
     }
 
+    if (key->vector_construction_params.length > 0) {
+      idx_options->set("vector_construction_params",
+                       dd::String_type(key->vector_construction_params.str,
+                                       key->vector_construction_params.length));
+    }
+
     /*
       If we have no primary key, then we pick the first candidate primary
       key and promote it. When we promote, the field's of key_part needs to

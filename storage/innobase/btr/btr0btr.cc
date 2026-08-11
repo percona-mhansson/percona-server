@@ -4656,7 +4656,7 @@ bool btr_validate_index(
   /* Full Text index are implemented by auxiliary tables,
   not the B-tree */
   if (dict_index_is_online_ddl(index) ||
-      ((index->type & DICT_FTS) || dict_index_is_vector(index))) {
+      (index->type & (DICT_FTS | DICT_VECTOR))) {
     return (true);
   }
 

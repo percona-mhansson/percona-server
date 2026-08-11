@@ -2218,9 +2218,8 @@ out if this is violated for records of maximum possible length of this index.
 @return true if the index record could become too big */
 static bool dict_index_too_big_for_tree(const dict_table_t *table,
                                         const dict_index_t *new_index) {
-  /* FTS index consists of auxiliary tables, they shall be excluded from index
-  row size check */
-  if ((new_index->type & DICT_FTS) || dict_index_is_vector(new_index)) {
+  /* FTS and vector indexes use auxiliary tables, not a standard B-tree */
+  if (new_index->type & (DICT_FTS | DICT_VECTOR)) {
     return (false);
   }
 
@@ -3303,7 +3302,6 @@ static dict_index_t *dict_index_build_internal_vec(
   auto new_index =
       dict_mem_index_create(table->name.m_name, index->name, index->space,
                             index->type, index->n_fields);
-  new_index->is_vector_index = index->is_vector_index;
 
   /* Copy other relevant data from the old index struct to the new
   struct: it inherits the values */
@@ -3407,7 +3405,7 @@ NOT NULL */
 
   while (index != nullptr) {
     if (types_idx != index && !(index->type & DICT_FTS) &&
-        !dict_index_is_vector(index) && !dict_index_is_spatial(index) &&
+        !(index->type & DICT_VECTOR) && !dict_index_is_spatial(index) &&
         !index->to_be_dropped &&
         (!(index->uncommitted &&
            ((index->online_status == ONLINE_INDEX_ABORTED_DROPPED) ||
@@ -3665,7 +3663,7 @@ bool dict_index_check_search_tuple(
   ut_ad(index->page >= FSP_FIRST_INODE_PAGE_NO);
   ut_ad(dtuple_check_typed(tuple));
   ut_ad(!(index->type & DICT_FTS));
-  ut_ad(!dict_index_is_vector(index));
+  ut_ad(!(index->type & DICT_VECTOR));
   return true;
 }
 #endif /* UNIV_DEBUG */

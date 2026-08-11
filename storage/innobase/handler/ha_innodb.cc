@@ -11020,7 +11020,7 @@ int ha_innobase::index_read(
                                  : HA_ERR_TABLE_DEF_CHANGED;
   }
 
-  if ((index->type & DICT_FTS) || dict_index_is_vector(index)) {
+  if (index->type & (DICT_FTS | DICT_VECTOR)) {
     return HA_ERR_KEY_NOT_FOUND;
   }
 
@@ -12870,9 +12870,12 @@ inline int create_index(
   /* We pass 0 as the space id, and determine at a lower level the space
   id where to store the table */
 
+  if (key->flags & HA_VECTOR) {
+    ind_type |= DICT_VECTOR;
+  }
+
   index = dict_mem_index_create(table_name, key->name, 0, ind_type,
                                 key->user_defined_key_parts);
-  index->is_vector_index = (key->flags & HA_VECTOR);
 
   innodb_session_t *&priv = thd_to_innodb_session(trx->mysql_thd);
   dict_table_t *handler = priv->lookup_table_handler(table_name);
@@ -12966,7 +12969,7 @@ inline int create_index(
   }
 
   ut_ad(key->flags & HA_FULLTEXT || !(index->type & DICT_FTS));
-  ut_ad((key->flags & HA_VECTOR) || !dict_index_is_vector(index));
+  ut_ad((key->flags & HA_VECTOR) || !(index->type & DICT_VECTOR));
 
   multi_val_idx = ((index->type & DICT_MULTI_VALUE) == DICT_MULTI_VALUE);
 
@@ -18722,8 +18725,7 @@ static bool innobase_get_index_column_cardinality(
       }
 
       DEBUG_SYNC(thd, "innodb.after_init_check");
-      if ((index->type & (DICT_FTS | DICT_SPATIAL)) ||
-          dict_index_is_vector(index)) {
+      if (index->type & (DICT_FTS | DICT_SPATIAL | DICT_VECTOR)) {
         /* For these indexes innodb_rec_per_key is
         fixed as 1.0 */
         *cardinality = ib_table->stat_n_rows;

@@ -147,6 +147,15 @@ class Select_lex_builder {
   bool add_from_item(PT_derived_table *dt);
 
   /**
+    Add a joined table reference to the FROM clause.
+
+    @return false on success.
+            true  on failure.
+  */
+
+  bool add_from_item(PT_table_reference *tr);
+
+  /**
     Prepare item representing a LIKE condition,
     @code
     SELECT ... WHERE <field_name> LIKE <value%> ...

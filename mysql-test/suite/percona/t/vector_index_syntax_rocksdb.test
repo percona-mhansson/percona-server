@@ -1,0 +1,10 @@
+--source include/have_rocksdb.inc
+
+CREATE TABLE t1 (
+  a CHAR( 2 ),
+  KEY ( a(1) )
+) ENGINE = ROCKSDB;
+
+SHOW KEYS FROM t1;
+
+DROP TABLE t1;

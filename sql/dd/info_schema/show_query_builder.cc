@@ -170,6 +170,12 @@ bool Select_lex_builder::add_from_item(PT_derived_table *dt) {
   return false;
 }
 
+bool Select_lex_builder::add_from_item(PT_table_reference *tr) {
+  if (m_table_reference_list.push_back(tr)) return true;
+
+  return false;
+}
+
 // Prepare item representing a LIKE condition.
 Item *Select_lex_builder::prepare_like_item(const LEX_CSTRING &field_name,
                                             const String *wild) {

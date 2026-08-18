@@ -735,10 +735,6 @@ bool fill_dd_columns_from_create_fields(THD *thd, dd::Abstract_table *tab_obj,
       col_options->set("is_array", true);
     }
 
-    if (field.sql_type == MYSQL_TYPE_VECTOR) {
-      col_options->set("vector_index", true);
-    }
-
     //
     // Write intervals
     //

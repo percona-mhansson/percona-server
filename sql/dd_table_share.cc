@@ -243,19 +243,7 @@ static enum ha_key_alg dd_get_old_index_algorithm_type(
   @return Whether any visible element belongs to a vector column.
 */
 static bool dd_index_has_vector_column(const dd::Index &idx_obj) {
-  for (const dd::Index_element *idx_elem : idx_obj.elements()) {
-    if (idx_elem->is_hidden()) continue;
-
-    const dd::Properties &col_options = idx_elem->column().options();
-    bool is_vector_column = false;
-    if (col_options.exists("vector_index") &&
-        !col_options.get("vector_index", &is_vector_column) &&
-        is_vector_column) {
-      return true;
-    }
-  }
-
-  return false;
+  return idx_obj.options().exists("vector_index_type");
 }
 
 /*

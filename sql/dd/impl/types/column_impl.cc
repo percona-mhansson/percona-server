@@ -73,8 +73,7 @@ static const std::set<String_type> default_valid_option_keys = {
     "zip_dict_id",
     "is_array",
     "gipk" /* generated implicit primary key column */,
-    "masking_policy",
-    "vector_index"};
+    "masking_policy"};
 
 ///////////////////////////////////////////////////////////////////////////
 // Column_impl implementation.

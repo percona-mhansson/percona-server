@@ -102,7 +102,7 @@ class Show_statistics : public Statistics {
   }
 
   // This view definition is hidden from user.
-  bool hidden() const override { return false; }
+  bool hidden() const override { return true; }
 };
 
 }  // namespace system_views

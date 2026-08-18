@@ -130,6 +130,8 @@ Show_statistics::Show_statistics() {
                          "idx.ordinal_position");
   m_target_def.add_field(FIELD_COLUMN_ORDINAL_POSITION,
                          "COLUMN_ORDINAL_POSITION", "icu.ordinal_position");
+  m_target_def.add_field(FIELD_INDEX_OPTIONS, "INDEX_OPTIONS",
+                         "idx.options");
 }
 
 }  // namespace dd::system_views

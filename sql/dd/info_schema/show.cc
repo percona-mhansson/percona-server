@@ -33,7 +33,6 @@
 #include "sql/dd/string_type.h"
 #include "sql/item_cmpfunc.h"    // Item_func_case
 #include "sql/parse_location.h"  // POS
-#include "sql/parse_tree_nodes.h" // PT_joined_table_on
 #include "sql/sql_class.h"
 #include "sql/sql_lex.h"
 #include "sql/table.h"
@@ -821,13 +820,10 @@ Query_block *build_show_keys_query(const POS &pos, THD *thd,
   static const LEX_CSTRING field_expression = {STRING_WITH_LEN("EXPRESSION")};
   static const LEX_CSTRING alias_expression = {STRING_WITH_LEN("Expression")};
 
-  // Fields for column type lookup via information_schema.COLUMNS
-  static const LEX_CSTRING columns_view_name = {STRING_WITH_LEN("COLUMNS")};
-  static const LEX_CSTRING field_data_type = {STRING_WITH_LEN("DATA_TYPE")};
-  static const LEX_CSTRING alias_data_type = {STRING_WITH_LEN("Data_type")};
-  static const LEX_CSTRING alias_col_db = {STRING_WITH_LEN("Col_db")};
-  static const LEX_CSTRING alias_col_tbl = {STRING_WITH_LEN("Col_tbl")};
-  static const LEX_CSTRING alias_col_name = {STRING_WITH_LEN("Col_name")};
+  static const LEX_CSTRING field_index_options = {
+      STRING_WITH_LEN("INDEX_OPTIONS")};
+  static const LEX_CSTRING alias_index_options = {
+      STRING_WITH_LEN("Index_options")};
 
   // Get the current logged in schema name
   LEX_CSTRING cur_db;
@@ -864,38 +860,16 @@ Query_block *build_show_keys_query(const POS &pos, THD *thd,
       sub_query.add_select_item(field_is_visible, alias_visible) ||
       sub_query.add_select_item(field_expression, alias_expression) ||
       sub_query.add_select_item(alias_index_pos, alias_index_pos) ||
-      sub_query.add_select_item(alias_column_pos, alias_column_pos))
+      sub_query.add_select_item(alias_column_pos, alias_column_pos) ||
+      sub_query.add_select_item(field_index_options, alias_index_options))
     return nullptr;
 
-  // ... FROM information_schema.SHOW_STATISTICS ...
+  // ... FROM information_schema.columns ...
   if (sub_query.add_from_item(INFORMATION_SCHEMA_NAME, system_view_name))
-    return nullptr;
-
-  // Build columns sub query for column type lookup
-  Select_lex_builder cols_query(&pos, thd);
-  if (cols_query.add_select_item(field_database, alias_col_db) ||
-      cols_query.add_select_item(field_table, alias_col_tbl) ||
-      cols_query.add_select_item(field_column_name, alias_col_name) ||
-      cols_query.add_select_item(field_data_type, alias_data_type) ||
-      cols_query.add_from_item(INFORMATION_SCHEMA_NAME, columns_view_name))
     return nullptr;
 
   /*
     Build the top level query
-
-        SELECT Table, ...,
-              IF(Index_type = 'SE_SPECIFIC',
-                  IF(Data_type = 'vector', 'VECTOR', Index_type),
-                  Index_type) AS Index_type, ...
-        FROM (SELECT ... FROM information_schema.SHOW_STATISTICS) AS SHOW_STATISTICS
-        LEFT JOIN
-            (SELECT TABLE_SCHEMA AS Col_db, TABLE_NAME AS Col_tbl,
-                    COLUMN_NAME AS Col_name, DATA_TYPE AS Data_type
-              FROM information_schema.COLUMNS) AS COLUMNS
-        ON Column_name = Col_name AND Col_db = <db> AND Col_tbl = <tbl>
-        WHERE Database = <db> AND Table = <tbl>
-        ORDER BY INDEX_ORDINAL_POSITION, COLUMN_ORDINAL_POSITION
-
   */
 
   Select_lex_builder top_query(&pos, thd);
@@ -912,17 +886,18 @@ Query_block *build_show_keys_query(const POS &pos, THD *thd,
       new (thd->mem_root) Item_func_eq(pos, index_type_item, se_specific_item);
   if (is_se_specific == nullptr) return nullptr;
 
-  Item *data_type_item =
-      new (thd->mem_root) Item_field(pos, NullS, NullS, alias_data_type.str);
-  if (data_type_item == nullptr) return nullptr;
+  Item *index_options_item = new (thd->mem_root)
+      Item_field(pos, NullS, NullS, alias_index_options.str);
+  if (index_options_item == nullptr) return nullptr;
 
-  Item *vector_type_item = new (thd->mem_root)
-      Item_string(STRING_WITH_LEN("vector"), system_charset_info);
-  if (vector_type_item == nullptr) return nullptr;
+  Item *vector_pattern = new (thd->mem_root)
+      Item_string(STRING_WITH_LEN("%vector_index_type=%"),
+                  system_charset_info);
+  if (vector_pattern == nullptr) return nullptr;
 
-  Item *is_vector_column =
-      new (thd->mem_root) Item_func_eq(pos, data_type_item, vector_type_item);
-  if (is_vector_column == nullptr) return nullptr;
+  Item *has_vector_index_type = new (thd->mem_root)
+      Item_func_like(pos, index_options_item, vector_pattern);
+  if (has_vector_index_type == nullptr) return nullptr;
 
   Item *vector_item = new (thd->mem_root)
       Item_string(STRING_WITH_LEN("VECTOR"), system_charset_info);
@@ -932,8 +907,8 @@ Query_block *build_show_keys_query(const POS &pos, THD *thd,
       new (thd->mem_root) Item_field(pos, NullS, NullS, alias_type.str);
   if (index_type_else_item == nullptr) return nullptr;
 
-  Item *index_type_if = new (thd->mem_root)
-      Item_func_if(pos, is_vector_column, vector_item, index_type_else_item);
+  Item *index_type_if = new (thd->mem_root) Item_func_if(
+      pos, has_vector_index_type, vector_item, index_type_else_item);
   if (index_type_if == nullptr) return nullptr;
 
   Item *index_type_default_item =
@@ -959,55 +934,9 @@ Query_block *build_show_keys_query(const POS &pos, THD *thd,
       top_query.add_select_item(alias_comment, alias_comment) ||
       top_query.add_select_item(alias_index_comment, alias_index_comment) ||
       top_query.add_select_item(alias_visible, alias_visible) ||
-      top_query.add_select_item(alias_expression, alias_expression))
-    return nullptr;
-
-  // Build LEFT JOIN between stats and columns derived tables
-  PT_derived_table *stats_dt =
-      sub_query.prepare_derived_table(system_view_name);
-  PT_derived_table *cols_dt =
-      cols_query.prepare_derived_table(columns_view_name);
-  if (stats_dt == nullptr || cols_dt == nullptr) return nullptr;
-
-  // ON Column_name = Col_name AND Col_db = <db> AND Col_tbl = <tbl>
-  Item *on_cn_left =
-      new (thd->mem_root) Item_field(pos, NullS, NullS, alias_column_name.str);
-  Item *on_cn_right =
-      new (thd->mem_root) Item_field(pos, NullS, NullS, alias_col_name.str);
-  if (on_cn_left == nullptr || on_cn_right == nullptr) return nullptr;
-  Item *on_col_name =
-      new (thd->mem_root) Item_func_eq(pos, on_cn_left, on_cn_right);
-  if (on_col_name == nullptr) return nullptr;
-
-  Item *on_col_db_field =
-      new (thd->mem_root) Item_field(pos, NullS, NullS, alias_col_db.str);
-  Item *on_col_db_val = new (thd->mem_root)
-      Item_string(cur_db.str, cur_db.length, system_charset_info);
-  if (on_col_db_field == nullptr || on_col_db_val == nullptr) return nullptr;
-  Item *on_col_db =
-      new (thd->mem_root) Item_func_eq(pos, on_col_db_field, on_col_db_val);
-  if (on_col_db == nullptr) return nullptr;
-
-  Item *on_col_tbl_field =
-      new (thd->mem_root) Item_field(pos, NullS, NullS, alias_col_tbl.str);
-  Item *on_col_tbl_val = new (thd->mem_root)
-      Item_string(table_ident->table.str, table_ident->table.length,
-                  system_charset_info);
-  if (on_col_tbl_field == nullptr || on_col_tbl_val == nullptr) return nullptr;
-  Item *on_col_tbl =
-      new (thd->mem_root) Item_func_eq(pos, on_col_tbl_field, on_col_tbl_val);
-  if (on_col_tbl == nullptr) return nullptr;
-
-  Item *on_col_name_and_db =
-      new (thd->mem_root) Item_cond_and(pos, on_col_name, on_col_db);
-  if (on_col_name_and_db == nullptr) return nullptr;
-  Item *on_condition =
-      new (thd->mem_root) Item_cond_and(pos, on_col_name_and_db, on_col_tbl);
-  if (on_condition == nullptr) return nullptr;
-
-  auto *left_join = new (thd->mem_root)
-      PT_joined_table_on(pos, stats_dt, pos, JTT_LEFT, cols_dt, on_condition);
-  if (left_join == nullptr || top_query.add_from_item(left_join))
+      top_query.add_select_item(alias_expression, alias_expression) ||
+      top_query.add_from_item(
+          sub_query.prepare_derived_table(system_view_name)))
     return nullptr;
 
   // ... WHERE 'Database' = <dbname> ...

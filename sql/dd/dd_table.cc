@@ -826,6 +826,10 @@ static dd::Index::enum_index_algorithm dd_get_new_index_algorithm_type(
     case HA_KEY_ALG_FULLTEXT:
       return dd::Index::IA_FULLTEXT;
 
+    /**
+      Vector indexes are labeled SE_SPECIFIC in the DD since adding a new enum
+      value would cause an incompatible change. (Percona)
+    */
     case HA_KEY_ALG_VECTOR:
       return dd::Index::IA_SE_SPECIFIC;
   }
@@ -839,6 +843,8 @@ static dd::Index::enum_index_algorithm dd_get_new_index_algorithm_type(
 }
 
 static dd::Index::enum_index_type dd_get_new_index_type(const KEY *key) {
+  // See comment in dd_get_new_index_algorithm_type() regarding
+  // HA_KEY_ALG_VECTOR (Percona)
   if (key->flags & HA_VECTOR) return dd::Index::IT_MULTIPLE;
 
   if (key->flags & HA_FULLTEXT) return dd::Index::IT_FULLTEXT;

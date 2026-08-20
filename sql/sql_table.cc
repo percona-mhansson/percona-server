@@ -8685,7 +8685,7 @@ bool mysql_prepare_create_table(
 
     if (key->type == KEYTYPE_VECTOR) {
       if (vector_key_number != 0U) {
-        my_error(ER_ONLY_SINGLE_VECTOR_INDEX_ALLOWED, MYF(0));
+        my_error(ER_NOT_SUPPORTED_YET, MYF(0), "multiple vector indexes on a single table");
         return true;
       }
       ++vector_key_number;
@@ -8763,11 +8763,15 @@ bool mysql_prepare_create_table(
 
   // We allow VECTOR indexes only on tables with BIGINT UNSIGNED PKs.
   if (vector_key_number) {
-    assert(primary_key);
-    const KEY &primary_info = *key_info_buffer[0];
+    if (*key_count == 0 || !((*key_info_buffer)[0].flags & HA_NOSAME) ||
+        ((*key_info_buffer)[0].flags & HA_NULL_PART_KEY)) {
+      my_error(ER_NOT_SUPPORTED_YET, MYF(0), "vector indexes on tables lacking a BIGINT UNSIGNED single column primary key");
+      return true;
+    }
+    const KEY &primary_info = (*key_info_buffer)[0];
 
     if (primary_info.actual_key_parts > 1) {
-      my_error(ER_VECTOR_INDEX_NEEDS_PK, MYF(0));
+      my_error(ER_NOT_SUPPORTED_YET, MYF(0), "vector indexes on tables lacking a BIGINT UNSIGNED single column primary key");
       return true;
     }
 
@@ -8776,7 +8780,7 @@ bool mysql_prepare_create_table(
     }
     assert(sql_field);
     if (sql_field->sql_type != MYSQL_TYPE_LONGLONG || !sql_field->is_unsigned) {
-      my_error(ER_VECTOR_INDEX_NEEDS_PK, MYF(0));
+      my_error(ER_NOT_SUPPORTED_YET, MYF(0), "vector indexes on tables lacking a BIGINT UNSIGNED single column primary key");
       return true;
     }
   }

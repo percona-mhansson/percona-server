@@ -522,8 +522,6 @@ enum ha_base_keytype {
 #define HA_USES_COMMENT (1 << 12)
 /** Key was automatically created to support Foreign Key constraint. */
 #define HA_GENERATED_KEY (1 << 13)
-/** Vector key (Percona). */
-#define HA_VECTOR (1 << 30)
 
 /* The combination of the above can be used for key type comparison. */
 #define HA_KEYFLAG_MASK                                                       \
@@ -561,6 +559,9 @@ enum ha_base_keytype {
 #define HA_VIRTUAL_GEN_KEY (1 << 18)
 /** Multi-valued key */
 #define HA_MULTI_VALUED_KEY (1 << 19)
+
+/** Vector key (Percona). */
+#define HA_VECTOR (1 << 30)
 
 constexpr const ulong HA_INDEX_USES_ENGINE_ATTRIBUTE{1UL << 20};
 constexpr const ulong HA_INDEX_USES_SECONDARY_ENGINE_ATTRIBUTE{1UL << 21};

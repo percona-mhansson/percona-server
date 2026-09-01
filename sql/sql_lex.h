@@ -1366,9 +1366,6 @@ class Query_block : public Query_term {
   /// @return true if query block references full-text functions
   bool has_ft_funcs() const { return ftfunc_list->elements > 0; }
 
-  /// @return true if query block references vector distance functions
-  bool has_vector_funcs() const { return vector_func_list->elements > 0; }
-
   /// @returns true if query block is a recursive member of a recursive unit
   bool is_recursive() const { return recursive_reference != nullptr; }
 
@@ -1968,12 +1965,6 @@ class Query_block : public Query_term {
   */
   List<Item_func_match> *ftfunc_list;
   List<Item_func_match> ftfunc_list_alloc{};
-
-  /**
-    A pointer to vector_func_list_alloc, list of vector distance functions.
-  */
-  List<Item_func_vec_distance> *vector_func_list;
-  List<Item_func_vec_distance> vector_func_list_alloc{};
 
   /// The VALUES items of a table value constructor.
   mem_root_deque<mem_root_deque<Item *> *> *row_value_list{nullptr};

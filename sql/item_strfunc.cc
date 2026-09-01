@@ -110,7 +110,6 @@
 #include "sql/events.h"          // Events::reconstruct_interval_expression
 #include "sql/filesort.h"
 #include "sql/handler.h"
-#include "sql/item_func.h"
 #include "sql/json_duality_view/i_s.h"  // get_json_duality_view_property
 #include "sql/mysqld.h"
 #include "sql/parse_tree_node_base.h"               // Parse_context
@@ -4449,17 +4448,6 @@ double Item_func_vec_distance::val_real() {
       assert(false);
       return 0.0;
   }
-}
-
-bool Item_func_vec_distance::do_itemize(Parse_context *pc, Item **res) {
-  if (Item_real_func::do_itemize(pc, res)) return true;
-
-  const auto select = pc->select;
-  if (select->parsing_place == CTX_ORDER_BY) {
-    select->add_vector_func_to_list(this);
-  }
-
-  return false;
 }
 
 String *Item_func_uncompress::val_str(String *str) {

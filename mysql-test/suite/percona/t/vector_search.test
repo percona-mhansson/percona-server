@@ -48,6 +48,14 @@ EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[
 --replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
 EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC LIMIT 3;
 
+--replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
+EXPLAIN ANALYZE
+SELECT id
+FROM t2
+ORDER BY
+  DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+  DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
+
 
 --echo # Case when vector search runs out of entries to return.
 SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;

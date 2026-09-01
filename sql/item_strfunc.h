@@ -1338,7 +1338,6 @@ class Item_func_vec_distance final : public Item_real_func {
   const char *func_name() const override { return "distance"; }
   enum Functype functype() const override { return VEC_DISTANCE_FUNC; }
   double val_real() override;
-  bool do_itemize(Parse_context *, Item **) override;
 };
 
 class Item_func_uncompress final : public Item_str_func {

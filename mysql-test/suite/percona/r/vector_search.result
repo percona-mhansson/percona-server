@@ -70,6 +70,16 @@ EXPLAIN
         -> Filter: (t2.flag = 1)  (cost=1.25 rows=10) (actual time=X..Y rows=5 loops=1)
             -> Table scan on t2  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
 
+EXPLAIN ANALYZE
+SELECT id
+FROM t2
+ORDER BY
+DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
+EXPLAIN
+-> Sort: distance(t2.v,to_vector('[0, 0]'),'EUCLIDEAN') DESC, distance(t2.v,to_vector('[10, 10]'),'EUCLIDEAN')  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
+    -> Vector index search on t2 using v  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
+
 # Case when vector search runs out of entries to return.
 SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
 id

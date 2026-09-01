@@ -836,7 +836,7 @@ bool JOIN::optimize(bool finalize_access_paths) {
   /* Perform FULLTEXT search before all regular searches */
   if (query_block->has_ft_funcs() && optimize_fts_query()) return true;
 
-  if (query_block->has_vector_funcs() && optimize_vector_query()) return true;
+  if (optimize_vector_query()) return true;
 
   /*
     By setting child_subquery_can_materialize so late we gain the following:
@@ -11018,37 +11018,33 @@ bool JOIN::optimize_fts_query() {
 bool JOIN::optimize_vector_query() {
   ASSERT_BEST_REF_IN_JOIN_ORDER(this);
 
-  assert(query_block->has_vector_funcs());
-
   // Only used by the old optimizer.
   assert(!thd->lex->using_hypergraph_optimizer());
 
-  assert(order.order != nullptr);
+  if (order.order == nullptr) return false;
 
-  for (const auto &dist_fn_expr : *query_block->vector_func_list) {
-    for (const auto *o = order.order; o != nullptr; o = o->next) {
-      if ((*o->item)->eq(&dist_fn_expr)) {
-        if (o->direction != ORDER_ASC) continue;
-      }
-    }
+  for (const auto *o = order.order; o != nullptr; o = o->next) {
+    if (o->direction != ORDER_ASC) continue;
+    if ((*o->item)->type() != Item::FUNC_ITEM) continue;
+    const auto &dist_fn_expr = down_cast<const Item_func *>(*o->item);
 
-    const auto arg1 = dist_fn_expr.arguments()[0]->real_item();
-    const auto arg2 = dist_fn_expr.arguments()[1]->real_item();
+    const auto arg1 = dist_fn_expr->arguments()[0]->real_item();
+    const auto arg2 = dist_fn_expr->arguments()[1]->real_item();
 
     Item *const_vector_expr;
-    const Field *vector_column;
+    const Field *column;
     if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
-      vector_column = down_cast<const Item_field *>(arg1)->field;
+      column = down_cast<const Item_field *>(arg1)->field;
       const_vector_expr = arg2;
     } else if (arg2->type() == Item::FIELD_ITEM &&
                arg1->const_for_execution()) {
-      vector_column = down_cast<const Item_field *>(arg2)->field;
+      column = down_cast<const Item_field *>(arg2)->field;
       const_vector_expr = arg1;
     } else {
       return false;
     }
 
-    assert(vector_column->type() == MYSQL_TYPE_VECTOR);
+    if (column->type() != MYSQL_TYPE_VECTOR) return false;
 
     for (uint i = const_tables; i < tables; i++) {
       JOIN_TAB *tab = best_ref[i];
@@ -11057,7 +11053,7 @@ bool JOIN::optimize_vector_query() {
           const auto &index = table->key_info[idx];
           if (index.flags & HA_VECTOR &&
               table->keys_in_use_for_query.is_set(idx) &&
-              index.key_part[0].field == vector_column) {
+              index.key_part[0].field == column) {
             tab->set_type(JT_VECTOR);
             tab->ref().key = idx;
             tab->ref().key_parts = 0;

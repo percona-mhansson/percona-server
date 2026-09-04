@@ -1784,7 +1784,8 @@ CHARSET_INFO *warn_on_deprecated_user_defined_collation(
 
 %type <cast_type> cast_type opt_returning_type
 
-%type <lexer.keyword> ident_keyword label_keyword role_keyword
+%type <lexer.keyword> ident_keyword ident_keyword_except_vector
+  label_keyword role_keyword
         lvalue_keyword
         ident_keywords_unambiguous
         ident_keywords_ambiguous_1_roles_and_labels
@@ -2264,7 +2265,10 @@ CHARSET_INFO *warn_on_deprecated_user_defined_collation(
 
 %type <column_def> column_def
 
+%type <lexer.lex_str> ident_except_vector
+
 %type <table_element> table_element
+  ambiguous_table_element_def
 
 %type <table_element_list> table_element_list
 
@@ -7075,10 +7079,29 @@ table_element_list:
 table_element:
           column_def            { $$= $1; }
         | table_constraint_def  { $$= $1; }
+        | ambiguous_table_element_def { $$= $1; }
+        ;
+
+ambiguous_table_element_def:
+          VECTOR_SYM INDEX_SYM opt_ident '(' key_list_with_expression ')'
+          opt_index_options
+          {
+            $$= NEW_PTN PT_inline_index_definition(@$, KEYTYPE_VECTOR, $3,
+                                                   nullptr, $5, $7);
+          }
+        | VECTOR_SYM field_def opt_references
+          {
+            LEX_STRING name;
+            name.str= YYTHD->strmake($1.str, $1.length);
+            if (name.str == nullptr)
+              MYSQL_YYABORT;
+            name.length= $1.length;
+            $$= NEW_PTN PT_column_def(@$, name, $2, $3);
+          }
         ;
 
 column_def:
-          ident field_def opt_references
+          ident_except_vector field_def opt_references
           {
             $$= NEW_PTN PT_column_def(@$, $1, $2, $3);
           }
@@ -15929,6 +15952,18 @@ TEXT_STRING_validated:
           }
         ;
 
+ident_except_vector:
+          IDENT_sys    { $$=$1; }
+        | ident_keyword_except_vector
+          {
+            THD *thd= YYTHD;
+            $$.str= thd->strmake($1.str, $1.length);
+            if ($$.str == nullptr)
+              MYSQL_YYABORT;
+            $$.length= $1.length;
+          }
+        ;
+
 ident:
           IDENT_sys    { $$=$1; }
         | ident_keyword
@@ -16055,6 +16090,11 @@ schema:
   one of `ident_keywords_ambiguous_...` rules instead.
 */
 ident_keyword:
+          ident_keyword_except_vector
+        | VECTOR_SYM
+        ;
+
+ident_keyword_except_vector:
           ident_keywords_unambiguous
         | ident_keywords_ambiguous_1_roles_and_labels
         | ident_keywords_ambiguous_2_labels
@@ -16593,7 +16633,6 @@ ident_keywords_unambiguous:
         | XML_SYM
         | YEAR_SYM
         | ZONE_SYM
-        | VECTOR_SYM
         ;
 
 /*

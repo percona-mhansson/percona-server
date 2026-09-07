@@ -2548,6 +2548,7 @@ bool create_ref_for_key(JOIN *join, JOIN_TAB *j, Key_use *org_keyuse,
 
   const uint key = org_keyuse->key;
   const bool ftkey = (org_keyuse->keypart == FT_KEYPART);
+  const bool veckey = (org_keyuse->keypart == VECTOR_KEYPART);
   THD *const thd = join->thd;
   uint keyparts, length;
   TABLE *const table = j->table();
@@ -2563,7 +2564,10 @@ bool create_ref_for_key(JOIN *join, JOIN_TAB *j, Key_use *org_keyuse,
     length = 0;
     keyparts = 1;
     ifm->get_master()->score_from_index_scan = true;
-  } else /* not ftkey */
+  } else if (veckey) {
+    length = 0;
+    keyparts = 1;
+  } else /* neither ftkey nor veckey */
     calc_length_and_keyparts(org_keyuse, j, key, used_tables, chosen_keyuses,
                              &length, &keyparts, nullptr, nullptr);
   if (thd->is_error()) {
@@ -2588,6 +2592,17 @@ bool create_ref_for_key(JOIN *join, JOIN_TAB *j, Key_use *org_keyuse,
 
     j->set_type(JT_FT);
     j->set_ft_func(down_cast<Item_func_match *>(keyuse->val));
+    memset(j->ref().key_copy, 0, sizeof(j->ref().key_copy[0]) * keyparts);
+
+    return false;
+  }
+  if (veckey) {
+    j->ref().items[0] = org_keyuse->val;
+    j->ref().cond_guards[0] = nullptr;
+
+    j->set_type(JT_VECTOR);
+    j->set_index(key);
+    j->set_vec(org_keyuse->val);
     memset(j->ref().key_copy, 0, sizeof(j->ref().key_copy[0]) * keyparts);
 
     return false;

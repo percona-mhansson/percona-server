@@ -10,31 +10,40 @@ t1	CREATE TABLE `t1` (
 # Too short row
 INSERT INTO t1 VALUES (1, TO_VECTOR("[1, 2]"));
 ERROR HY000: Unknown error
-# Normal rows
 INSERT INTO t1 VALUES (1, TO_VECTOR("[0, 0, 0]"));
 INSERT INTO t1 VALUES (2, TO_VECTOR("[1, 1, 1]"));
 INSERT INTO t1 VALUES (3, TO_VECTOR("[0, 0, 0.1]"));
+INSERT INTO t1 SELECT id + 3, v FROM t1;
+ANALYZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
 SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 id
 1
+4
 3
+6
 2
+5
 EXPLAIN ANALYZE SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 EXPLAIN
--> Limit: 10 row(s)  (cost=0.55 rows=3) (actual time=X..Y rows=3 loops=1)
-    -> Vector index search on t1 using v  (cost=0.55 rows=3) (actual time=X..Y rows=3 loops=1)
+-> Limit: 10 row(s)  (cost=0.35 rows=1) (actual time=X..Y rows=6 loops=1)
+    -> Vector index search on t1 using v (v = to_vector('[0, 0, 0]'))  (cost=0.35 rows=1) (actual time=X..Y rows=6 loops=1)
 
 # Check that changes to index are persisted.
 # restart
 SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 id
 1
+4
 3
+6
 2
+5
 EXPLAIN ANALYZE SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 EXPLAIN
--> Limit: 10 row(s)  (cost=0.35 rows=1) (actual time=X..Y rows=3 loops=1)
-    -> Vector index search on t1 using v  (cost=0.35 rows=1) (actual time=X..Y rows=3 loops=1)
+-> Limit: 10 row(s)  (cost=0.35 rows=1) (actual time=X..Y rows=6 loops=1)
+    -> Vector index search on t1 using v (v = to_vector('[0, 0, 0]'))  (cost=0.35 rows=1) (actual time=X..Y rows=6 loops=1)
 
 DROP TABLE t1;
 # Test that filtering works correctly with vector search.
@@ -52,23 +61,30 @@ INSERT INTO t2 VALUES (7, TO_VECTOR("[0, 6]"), 1);
 INSERT INTO t2 VALUES (8, TO_VECTOR("[7, 0]"), 0);
 INSERT INTO t2 VALUES (9, TO_VECTOR("[0, 8]"), 0);
 INSERT INTO t2 VALUES (10, TO_VECTOR("[9, 0]"), 1);
+EXPLAIN ANALYZE
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+EXPLAIN
+-> Limit: 3 row(s)  (cost=0.26 rows=0.1) (actual time=X..Y rows=3 loops=1)
+    -> Filter: (t2.flag = 1)  (cost=0.26 rows=0.1) (actual time=X..Y rows=3 loops=1)
+        -> Vector index search on t2 using v (v = to_vector('[0, 0]'))  (cost=0.26 rows=1) (actual time=X..Y rows=6 loops=1)
+
+EXPLAIN FORMAT=TRADITIONAL
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	vector	v	v	0	const	1	10.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`id` AS `id` from `test`.`t2` where (`test`.`t2`.`flag` = 1) order by distance(`test`.`t2`.`v`,to_vector('[0, 0]'),'EUCLIDEAN') limit 3
 SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
 id
 2
 3
 6
-EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+EXPLAIN ANALYZE
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC;
 EXPLAIN
--> Limit: 3 row(s)  (cost=1.25 rows=1) (actual time=X..Y rows=3 loops=1)
-    -> Filter: (t2.flag = 1)  (cost=1.25 rows=1) (actual time=X..Y rows=3 loops=1)
-        -> Vector index search on t2 using v  (cost=1.25 rows=1) (actual time=X..Y rows=6 loops=1)
-
-EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC LIMIT 3;
-EXPLAIN
--> Limit: 3 row(s)  (cost=1.25 rows=3) (actual time=X..Y rows=3 loops=1)
-    -> Sort: distance(t2.v,to_vector('[0, 0]'),'EUCLIDEAN') DESC, limit input to 3 row(s) per chunk  (cost=1.25 rows=10) (actual time=X..Y rows=3 loops=1)
-        -> Filter: (t2.flag = 1)  (cost=1.25 rows=10) (actual time=X..Y rows=5 loops=1)
-            -> Table scan on t2  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
+-> Sort: distance(t2.v,to_vector('[0, 0]'),'EUCLIDEAN') DESC  (cost=1.25 rows=10) (actual time=X..Y rows=5 loops=1)
+    -> Filter: (t2.flag = 1)  (cost=1.25 rows=10) (actual time=X..Y rows=5 loops=1)
+        -> Table scan on t2  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
 
 EXPLAIN ANALYZE
 SELECT id
@@ -77,9 +93,35 @@ ORDER BY
 DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
 DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
 EXPLAIN
--> Sort: distance(t2.v,to_vector('[0, 0]'),'EUCLIDEAN') DESC, distance(t2.v,to_vector('[10, 10]'),'EUCLIDEAN')  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
-    -> Vector index search on t2 using v  (cost=1.25 rows=10) (actual time=X..Y rows=10 loops=1)
+-> Sort: distance(t2.v,to_vector('[0, 0]'),'EUCLIDEAN') DESC, distance(t2.v,to_vector('[10, 10]'),'EUCLIDEAN')  (cost=0.35 rows=1) (actual time=X..Y rows=10 loops=1)
+    -> Vector index search on t2 using v (v = to_vector('[10, 10]'))  (cost=0.35 rows=1) (actual time=X..Y rows=10 loops=1)
 
+EXPLAIN FORMAT=TRADITIONAL
+SELECT id
+FROM t2
+ORDER BY
+DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t2	NULL	vector	v	v	0	const	1	100.00	Using filesort
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`id` AS `id` from `test`.`t2` order by distance(`test`.`t2`.`v`,to_vector('[0, 0]'),'EUCLIDEAN') desc,distance(`test`.`t2`.`v`,to_vector('[10, 10]'),'EUCLIDEAN')
+SELECT id
+FROM t2
+ORDER BY
+DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
+id
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
 # Case when vector search runs out of entries to return.
 SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
 id
@@ -90,9 +132,9 @@ id
 9
 EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
 EXPLAIN
--> Limit: 6 row(s)  (cost=1.25 rows=1) (actual time=X..Y rows=5 loops=1)
-    -> Filter: (t2.flag = 0)  (cost=1.25 rows=1) (actual time=X..Y rows=5 loops=1)
-        -> Vector index search on t2 using v  (cost=1.25 rows=1) (actual time=X..Y rows=10 loops=1)
+-> Limit: 6 row(s)  (cost=0.26 rows=0.1) (actual time=X..Y rows=5 loops=1)
+    -> Filter: (t2.flag = 0)  (cost=0.26 rows=0.1) (actual time=X..Y rows=5 loops=1)
+        -> Vector index search on t2 using v (v = to_vector('[0, 0]'))  (cost=0.26 rows=1) (actual time=X..Y rows=10 loops=1)
 
 DROP TABLE t2;
 #
@@ -229,8 +271,8 @@ test.t1	analyze	status	OK
 EXPLAIN ANALYZE
 SELECT id FROM t1 ORDER BY distance(v, to_vector('[0, 0, 0]'), 'EUCLIDEAN') LIMIT 2;
 EXPLAIN
--> Limit: 2 row(s)  (cost=0.55 rows=2) (actual time=X..Y rows=2 loops=1)
-    -> Vector index search on t1 using v  (cost=0.55 rows=3) (actual time=X..Y rows=2 loops=1)
+-> Limit: 2 row(s)  (cost=0.35 rows=1) (actual time=X..Y rows=2 loops=1)
+    -> Vector index search on t1 using v (v = to_vector('[0, 0, 0]'))  (cost=0.35 rows=1) (actual time=X..Y rows=2 loops=1)
 
 SELECT id FROM t1 ORDER BY distance(v, to_vector('[0, 0, 0]'), 'EUCLIDEAN') LIMIT 2;
 id
@@ -239,8 +281,8 @@ id
 EXPLAIN ANALYZE
 SELECT id FROM t1 ORDER BY distance(to_vector('[0, 0, 0]'), v ,'EUCLIDEAN') LIMIT 2;
 EXPLAIN
--> Limit: 2 row(s)  (cost=0.55 rows=2) (actual time=X..Y rows=2 loops=1)
-    -> Vector index search on t1 using v  (cost=0.55 rows=3) (actual time=X..Y rows=2 loops=1)
+-> Limit: 2 row(s)  (cost=0.35 rows=1) (actual time=X..Y rows=2 loops=1)
+    -> Vector index search on t1 using v (v = to_vector('[0, 0, 0]'))  (cost=0.35 rows=1) (actual time=X..Y rows=2 loops=1)
 
 SELECT id FROM t1 ORDER BY distance(to_vector('[0, 0, 0]'), v ,'EUCLIDEAN') LIMIT 2;
 id
@@ -375,3 +417,17 @@ t4	CREATE TABLE `t4` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 DROP FUNCTION vector_to_pretty_string;
 DROP TABLE t1, t2, t3, t4;
+CREATE TABLE `t1` (
+id bigint unsigned NOT NULL AUTO_INCREMENT,
+v1 vector(3) NOT NULL,
+PRIMARY KEY (id),
+VECTOR KEY v1 (v1)
+);
+insert into t1 values (1, to_vector('[0.5, 0.5, 0.5]')), (2, to_vector('[0.1, 0.2, 0.3]')), (3, to_vector('[0.4, 0.2, 0.4]')), (4, to_vector('[0.1, 0.0, 0.1]'));
+explain format=traditional
+select id, vector_to_string( v1 ), distance( v1, to_vector('[0, 0, 0]'), 'euclidean') from t1 order by distance(v1, to_vector('[0, 0, 0]'), "euclidean");
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	NULL	vector	v1	v1	0	const	1	100.00	NULL
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t1`.`id` AS `id`,from_vector(`test`.`t1`.`v1`) AS `vector_to_string( v1 )`,distance(`test`.`t1`.`v1`,to_vector('[0, 0, 0]'),'euclidean') AS `distance( v1, to_vector('[0, 0, 0]'), 'euclidean')` from `test`.`t1` order by distance(`test`.`t1`.`v1`,to_vector('[0, 0, 0]'),'euclidean')
+drop table t1;

@@ -8476,9 +8476,9 @@ int ha_innobase::open(const char *name, int, uint open_flags,
                      const hnswlib::HierarchicalNSW<
                          float>::NeighborLabelListsByLevel &neighbors_by_level,
                      void *callback_context) {
-          fprintf(stderr,
-                  "[ha_innobase vector insert callback] id (label)=%zu\n",
-                  label);
+          // fprintf(stderr,
+          //         "[ha_innobase vector insert callback] id (label)=%zu\n",
+          //         label);
           (void)internal_id;
           const innodb_vector_addpoint_context_t *ctx =
               static_cast<const innodb_vector_addpoint_context_t *>(
@@ -8487,10 +8487,10 @@ int ha_innobase::open(const char *name, int, uint open_flags,
           ut_ad(ctx->ib_table != nullptr);
           ut_ad(ctx->trx != nullptr);
 
-          fprintf(
-              stderr,
-              "[ha_innobase vector insert callback] data_point as float[%u]:\n",
-              ctx->vector_dimensions);
+          // fprintf(
+          //     stderr,
+          //     "[ha_innobase vector insert callback] data_point as float[%u]:\n",
+          //     ctx->vector_dimensions);
           {
             const float *const fv = static_cast<const float *>(data_point);
             for (uint32_t d = 0; d < ctx->vector_dimensions; ++d) {
@@ -8498,10 +8498,10 @@ int ha_innobase::open(const char *name, int, uint open_flags,
             }
           }
 
-          fprintf(stderr,
-                  "[ha_innobase vector insert callback] neighbors_by_level "
-                  "(%zu levels):\n",
-                  neighbors_by_level.size());
+          // fprintf(stderr,
+          //         "[ha_innobase vector insert callback] neighbors_by_level "
+          //         "(%zu levels):\n",
+          //         neighbors_by_level.size());
           for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
             fprintf(stderr, "  level %zu:", lev);
             for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {
@@ -8534,14 +8534,14 @@ int ha_innobase::open(const char *name, int, uint open_flags,
               (void)internal_id;
               (void)data_point;
 
-              fprintf(stderr,
-                      "[ha_innobase vector update callback] id (label)=%zu\n",
-                      label);
+              // fprintf(stderr,
+              //         "[ha_innobase vector update callback] id (label)=%zu\n",
+              //         label);
 
-              fprintf(stderr,
-                      "[ha_innobase vector update callback] neighbors_by_level "
-                      "(%zu levels):\n",
-                      neighbors_by_level.size());
+              // fprintf(stderr,
+              //         "[ha_innobase vector update callback] neighbors_by_level "
+              //         "(%zu levels):\n",
+              //         neighbors_by_level.size());
               for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
                 fprintf(stderr, "  level %zu:", lev);
                 for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {

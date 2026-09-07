@@ -5,10 +5,13 @@ SHOW CREATE TABLE t1;
 --error ER_UNKNOWN_ERROR
 INSERT INTO t1 VALUES (1, TO_VECTOR("[1, 2]"));
 
---echo # Normal rows
 INSERT INTO t1 VALUES (1, TO_VECTOR("[0, 0, 0]"));
 INSERT INTO t1 VALUES (2, TO_VECTOR("[1, 1, 1]"));
 INSERT INTO t1 VALUES (3, TO_VECTOR("[0, 0, 0.1]"));
+
+INSERT INTO t1 SELECT id + 3, v FROM t1;
+
+ANALYZE TABLE t1;
 
 SELECT id FROM t1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0, 0]"), "EUCLIDEAN") LIMIT 10;
 --replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
@@ -42,11 +45,15 @@ INSERT INTO t2 VALUES (8, TO_VECTOR("[7, 0]"), 0);
 INSERT INTO t2 VALUES (9, TO_VECTOR("[0, 8]"), 0);
 INSERT INTO t2 VALUES (10, TO_VECTOR("[9, 0]"), 1);
 
+--replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
+EXPLAIN ANALYZE
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
+EXPLAIN FORMAT=TRADITIONAL
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
 SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
 --replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
-EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 3;
---replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
-EXPLAIN ANALYZE SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC LIMIT 3;
+EXPLAIN ANALYZE
+SELECT id FROM t2 WHERE flag=1 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC;
 
 --replace_regex /actual time=[0-9.e+-]+ /actual time=X..Y /
 EXPLAIN ANALYZE
@@ -56,6 +63,18 @@ ORDER BY
   DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
   DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
 
+EXPLAIN FORMAT=TRADITIONAL
+SELECT id
+FROM t2
+ORDER BY
+  DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+  DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
+
+SELECT id
+FROM t2
+ORDER BY
+  DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") DESC,
+  DISTANCE(v, TO_VECTOR("[10, 10]"), "EUCLIDEAN");
 
 --echo # Case when vector search runs out of entries to return.
 SELECT id FROM t2 WHERE flag= 0 ORDER BY DISTANCE(v, TO_VECTOR("[0, 0]"), "EUCLIDEAN") LIMIT 6;
@@ -256,3 +275,17 @@ SHOW CREATE TABLE t4;
 
 DROP FUNCTION vector_to_pretty_string;
 DROP TABLE t1, t2, t3, t4;
+
+CREATE TABLE `t1` (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  v1 vector(3) NOT NULL,
+  PRIMARY KEY (id),
+  VECTOR KEY v1 (v1)
+);
+
+insert into t1 values (1, to_vector('[0.5, 0.5, 0.5]')), (2, to_vector('[0.1, 0.2, 0.3]')), (3, to_vector('[0.4, 0.2, 0.4]')), (4, to_vector('[0.1, 0.0, 0.1]'));
+
+explain format=traditional
+select id, vector_to_string( v1 ), distance( v1, to_vector('[0, 0, 0]'), 'euclidean') from t1 order by distance(v1, to_vector('[0, 0, 0]'), "euclidean");
+
+drop table t1;

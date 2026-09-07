@@ -276,7 +276,9 @@ Key_use *Optimize_table_order::find_best_ref(
     Opt_trace_object trace_access_idx(trace);
 
     enum idx_type cur_keytype =
-        (keyuse->keypart == FT_KEYPART) ? FULLTEXT : NOT_UNIQUE;
+        (keyuse->keypart == FT_KEYPART /*|| keyuse->keypart == VECTOR_KEYPART*/)
+            ? FULLTEXT
+            : NOT_UNIQUE;
 
     // Calculate how many key segments of the current key we can use
     Key_use *const start_key = keyuse;
@@ -336,7 +338,7 @@ Key_use *Optimize_table_order::find_best_ref(
           const_part |= keyuse->keypart_map;
         }
         found_part |= keyuse->keypart_map;
-        if (keypart != FT_KEYPART) {
+        if (keypart != FT_KEYPART && keypart != VECTOR_KEYPART) {
           const bool keyinfo_maybe_null =
               keyinfo->key_part[keypart].field->is_nullable() ||
               tab->table()->is_nullable();
@@ -1344,7 +1346,8 @@ float calculate_condition_filter(const JOIN_TAB *const tab,
   if (keyuse) {
     const KEY *key = table->key_info + keyuse->key;
 
-    if (keyuse[0].keypart == FT_KEYPART) {
+    if (keyuse[0].keypart == FT_KEYPART ||
+        keyuse[0].keypart == VECTOR_KEYPART) {
       /*
         Fulltext indexes are special because keyuse->keypart does not
         contain the keypart number but a constant (FT_KEYPART)
@@ -1682,7 +1685,7 @@ bool Optimize_table_order::semijoin_loosescan_fill_driving_table_position(
         if ((keyuse->sj_pred_no == UINT_MAX) ||
             (excluded_tables & keyuse->used_tables) ||
             !(remaining_tables & keyuse->used_tables) ||
-            (keypart == FT_KEYPART) ||
+            (keypart == FT_KEYPART) || (keypart == VECTOR_KEYPART) ||
             (table->key_info[key].key_part[keypart].key_part_flag &
              HA_PART_KEY_SEG))
           continue;

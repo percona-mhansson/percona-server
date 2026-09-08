@@ -8491,24 +8491,24 @@ int ha_innobase::open(const char *name, int, uint open_flags,
           //     stderr,
           //     "[ha_innobase vector insert callback] data_point as float[%u]:\n",
           //     ctx->vector_dimensions);
-          {
-            const float *const fv = static_cast<const float *>(data_point);
-            for (uint32_t d = 0; d < ctx->vector_dimensions; ++d) {
-              fprintf(stderr, "  [%u]=%g\n", d, static_cast<double>(fv[d]));
-            }
-          }
+          // {
+          //   const float *const fv = static_cast<const float *>(data_point);
+          //   for (uint32_t d = 0; d < ctx->vector_dimensions; ++d) {
+          //     fprintf(stderr, "  [%u]=%g\n", d, static_cast<double>(fv[d]));
+          //   }
+          // }
 
           // fprintf(stderr,
           //         "[ha_innobase vector insert callback] neighbors_by_level "
           //         "(%zu levels):\n",
           //         neighbors_by_level.size());
-          for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
-            fprintf(stderr, "  level %zu:", lev);
-            for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {
-              fprintf(stderr, " %zu", nlab);
-            }
-            fprintf(stderr, "\n");
-          }
+          // for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
+          //   fprintf(stderr, "  level %zu:", lev);
+          //   for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {
+          //     fprintf(stderr, " %zu", nlab);
+          //   }
+          //   fprintf(stderr, "\n");
+          // }
 
           const ulint vec_len =
               static_cast<ulint>(ctx->vector_dimensions) * sizeof(float);
@@ -8542,13 +8542,13 @@ int ha_innobase::open(const char *name, int, uint open_flags,
               //         "[ha_innobase vector update callback] neighbors_by_level "
               //         "(%zu levels):\n",
               //         neighbors_by_level.size());
-              for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
-                fprintf(stderr, "  level %zu:", lev);
-                for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {
-                  fprintf(stderr, " %zu", nlab);
-                }
-                fprintf(stderr, "\n");
-              }
+              // for (size_t lev = 0; lev < neighbors_by_level.size(); ++lev) {
+              //   fprintf(stderr, "  level %zu:", lev);
+              //   for (hnswlib::labeltype nlab : neighbors_by_level[lev]) {
+              //     fprintf(stderr, " %zu", nlab);
+              //   }
+              //   fprintf(stderr, "\n");
+              // }
 
               const innodb_vector_addpoint_context_t *ctx =
                   static_cast<const innodb_vector_addpoint_context_t *>(

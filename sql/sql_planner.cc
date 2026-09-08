@@ -227,7 +227,7 @@ Key_use *Optimize_table_order::find_best_ref(
   double best_ref_cost = DBL_MAX;
 
   // Index type, note that code below relies on this element definition order
-  enum idx_type { CLUSTERED_PK, UNIQUE, NOT_UNIQUE, FULLTEXT };
+  enum idx_type { CLUSTERED_PK, UNIQUE, NOT_UNIQUE, FULLTEXT, VECTOR, };
   enum idx_type best_found_keytype = NOT_UNIQUE;
 
   TABLE *const table = tab->table();
@@ -275,10 +275,13 @@ Key_use *Optimize_table_order::find_best_ref(
     DBUG_PRINT("info", ("Considering ref access on key %s", keyinfo->name));
     Opt_trace_object trace_access_idx(trace);
 
-    enum idx_type cur_keytype =
-        (keyuse->keypart == FT_KEYPART /*|| keyuse->keypart == VECTOR_KEYPART*/)
-            ? FULLTEXT
-            : NOT_UNIQUE;
+    enum idx_type cur_keytype;
+    if (keyuse->keypart == FT_KEYPART)
+      cur_keytype = FULLTEXT;
+    else if (keyuse->keypart == VECTOR_KEYPART)
+      cur_keytype = VECTOR;
+    else
+      cur_keytype = NOT_UNIQUE;
 
     // Calculate how many key segments of the current key we can use
     Key_use *const start_key = keyuse;
@@ -377,7 +380,7 @@ Key_use *Optimize_table_order::find_best_ref(
     }
 
     // fulltext indexes require special treatment
-    if (cur_keytype != FULLTEXT) {
+    if (cur_keytype != FULLTEXT && cur_keytype != VECTOR) {
       *found_condition |= (0 != found_part);
 
       const bool all_key_parts_covered =
@@ -670,7 +673,7 @@ Key_use *Optimize_table_order::find_best_ref(
         trace_access_idx.add("usable", false).add("chosen", false);
         continue;
       }
-    } else {
+    } else if (cur_keytype == FULLTEXT) {
       // This is a full-text index
 
       trace_access_idx.add_alnum("access_type", "fulltext")
@@ -686,7 +689,26 @@ Key_use *Optimize_table_order::find_best_ref(
       cur_read_cost = prev_record_reads(join, idx, table_deps) *
                       table->cost_model()->page_read_cost(1.0);
       cur_fanout = 1.0;
-    }
+    } else if (cur_keytype == VECTOR) {
+      // This is a vector index
+
+      trace_access_idx.add_alnum("access_type", "vector")
+          .add_utf8("index", keyinfo->name);
+
+      if (best_found_keytype < NOT_UNIQUE) {
+        trace_access_idx.add("chosen", false)
+            .add_alnum("cause", "heuristic_eqref_already_found");
+        // Ignore test_all_ref_keys, semijoin loosescan never uses vector
+        continue;
+      }
+
+      cur_read_cost =
+          prev_record_reads(join, idx, table_deps) *
+          table->cost_model()->page_read_cost(
+              1.0 *
+              ((keyuse - 1)->ref_table_rows == 0 ? 1.0 : (keyuse - 1)->ref_table_rows));
+      cur_fanout = 1.0;
+      }
 
     start_key->bound_keyparts = found_part;
     start_key->fanout = cur_fanout;

@@ -113,6 +113,7 @@
 #include "sql/sql_join_buffer.h"  // JOIN_CACHE
 #include "sql/sql_list.h"         // List_iterator_fast
 #include "sql/sql_planner.h"      // calculate_condition_filter
+#include "sql/sql_select.h"
 #include "sql/sql_test.h"         // print_where
 #include "sql/sql_tmp_table.h"
 #include "sql/system_variables.h"
@@ -10939,8 +10940,11 @@ void JOIN::optimize_keyuse() {
       gives 5000/100 = 50 records per key
       Constant tables are ignored.
       To avoid bad matches, we don't make ref_table_rows less than 100.
+
+      For vector indexes, we store the LIMIT in Key_use::ref_table_rows.
     */
-    keyuse->ref_table_rows = ~(ha_rows)0;  // If no ref
+    if (keyuse->keypart != VECTOR_KEYPART)
+      keyuse->ref_table_rows = ~(ha_rows)0;  // If no ref
     if (keyuse->used_tables &
         (map = keyuse->used_tables & ~(const_table_map | PSEUDO_TABLE_BITS))) {
       uint tableno;
@@ -11067,12 +11071,16 @@ static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
       if ((index.flags & HA_VECTOR) &&
           table->keys_in_use_for_query.is_set(idx) &&
           index.key_part[0].field->eq(column)) {
+        longlong limit = join->query_block->select_limit == nullptr
+                             ? 0
+                             : join->query_block->select_limit->val_int();
+
         const Key_use keyuse(tl, const_vector_expr,
                              const_vector_expr->used_tables(), idx,
                              VECTOR_KEYPART,
                              0,            // optimize
                              0,            // keypart_map
-                             ~(ha_rows)0,  // ref_table_rows
+                             limit,  // ref_table_rows
                              false,        // null_rejecting
                              nullptr,      // cond_guard
                              UINT_MAX);    // sj_pred_no

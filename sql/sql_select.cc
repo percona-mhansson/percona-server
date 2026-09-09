@@ -5285,6 +5285,52 @@ bool test_if_cheaper_ordering(const JOIN_TAB *tab, ORDER_with_src *order,
     uint used_key_parts;
     bool skip_quick;
 
+    // A vector index satisfies ORDER BY distance(); test_if_order_by_key()
+    // can't see this, so recognise it via the VECTOR_KEYPART Key_use instead.
+    bool is_vector_key = false;
+    if (tab != nullptr && (table->key_info[nr].flags & HA_VECTOR)) {
+      for (const Key_use *ku = tab->keyuse();
+           ku != nullptr && ku->table_ref == tab->table_ref; ++ku) {
+        if (ku->key == nr && ku->keypart == VECTOR_KEYPART) {
+          is_vector_key = true;
+          break;
+        }
+      }
+    }
+
+    if (is_vector_key) {
+      if (!usable_keys.is_set(nr)) continue;
+
+      const double vector_scan_time =
+          select_limit * table->file->page_read_cost(nr, 1.0);
+
+      // The non-vector plan must filesort its output to satisfy ORDER BY
+      // distance(); the vector scan returns rows already ordered and skips it.
+      const double sort_input_rows =
+          table_records * (fanout > 0 ? fanout : 1.0);
+      const double sort_result_rows =
+          std::min<double>(select_limit, sort_input_rows);
+      const Cost_model_table *const cost_model = table->cost_model();
+      const double sort_cost =
+          cost_model->row_evaluate_cost(sort_input_rows) +
+          cost_model->key_compare_cost(sort_result_rows *
+                                       std::max(log2(sort_result_rows), 1.0));
+
+      const double alt_cost = read_time + sort_cost;
+      if (vector_scan_time < alt_cost &&
+          (best_key < 0 || vector_scan_time < best_read_time)) {
+        best_key = nr;
+        best_key_parts = 1;
+        if (saved_best_key_parts) *saved_best_key_parts = 1;
+        best_key_direction = 1;
+        best_records = static_cast<ha_rows>(select_limit);
+        best_read_time = vector_scan_time;
+        best_select_limit = select_limit;
+        is_best_covering = false;
+      }
+      continue;
+    }
+
     if (usable_keys.is_set(nr) &&
         (direction = test_if_order_by_key(order, table, nr, &used_key_parts,
                                           &skip_quick))) {

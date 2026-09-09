@@ -2337,13 +2337,18 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
 
   for (ORDER *tmp_order = order.order; tmp_order; tmp_order = tmp_order->next) {
     const Item *item = (*tmp_order->item)->real_item();
-    if (item->type() != Item::FIELD_ITEM) {
+    if (item->type() != Item::FIELD_ITEM &&
+        (item->type() != Item::FUNC_ITEM ||
+         down_cast<const Item_func *>(item)->functype() !=
+             Item_func::VEC_DISTANCE_FUNC)) {
       usable_keys.clear_all();
       return false;
     }
-    usable_keys.intersect(
-        down_cast<const Item_field *>(item)->field->part_of_sortkey);
-    if (usable_keys.is_clear_all()) return false;  // No usable keys
+    if (item->type() == Item::FIELD_ITEM) {
+      usable_keys.intersect(
+          down_cast<const Item_field *>(item)->field->part_of_sortkey);
+      if (usable_keys.is_clear_all()) return false;  // No usable keys
+    }
   }
   if (tab->type() == JT_REF_OR_NULL || tab->type() == JT_FT) return false;
 

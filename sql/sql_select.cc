@@ -5301,20 +5301,21 @@ bool test_if_cheaper_ordering(const JOIN_TAB *tab, ORDER_with_src *order,
     if (is_vector_key) {
       if (!usable_keys.is_set(nr)) continue;
 
+      const double vec_limit = (select_limit == HA_POS_ERROR)
+                                   ? static_cast<double>(table_records)
+                                   : static_cast<double>(select_limit);
       const double vector_scan_time =
-          select_limit * table->file->page_read_cost(nr, 1.0);
+          vec_limit * table->file->page_read_cost(nr, 1.0);
 
       // The non-vector plan must filesort its output to satisfy ORDER BY
       // distance(); the vector scan returns rows already ordered and skips it.
-      const double sort_input_rows =
-          table_records * (fanout > 0 ? fanout : 1.0);
-      const double sort_result_rows =
-          std::min<double>(select_limit, sort_input_rows);
+      // Sort n rows until we have k rows to return
+      const double n = table_records * (fanout > 0 ? fanout : 1.0);
+      const double k = std::min<double>(vec_limit, n);
       const Cost_model_table *const cost_model = table->cost_model();
       const double sort_cost =
-          cost_model->row_evaluate_cost(sort_input_rows) +
-          cost_model->key_compare_cost(sort_result_rows *
-                                       std::max(log2(sort_result_rows), 1.0));
+          cost_model->row_evaluate_cost(n) * 2096 +
+          cost_model->key_compare_cost(k * std::max(log2(k), 1.0));
 
       const double alt_cost = read_time + sort_cost;
       if (vector_scan_time < alt_cost &&

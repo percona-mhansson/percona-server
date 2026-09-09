@@ -702,13 +702,11 @@ Key_use *Optimize_table_order::find_best_ref(
         continue;
       }
 
-      cur_read_cost =
-          prev_record_reads(join, idx, table_deps) *
-          table->cost_model()->page_read_cost(
-              1.0 *
-              ((keyuse - 1)->ref_table_rows == 0 ? 1.0 : (keyuse - 1)->ref_table_rows));
-      cur_fanout = 1.0;
-      }
+      double limit = (keyuse - 1)->ref_table_rows;
+      cur_read_cost = prev_record_reads(join, idx, table_deps) *
+                      table->cost_model()->page_read_cost(1.0 * limit);
+      cur_fanout = limit == 0 ? ~(ha_rows)0 : limit;
+    }
 
     start_key->bound_keyparts = found_part;
     start_key->fanout = cur_fanout;

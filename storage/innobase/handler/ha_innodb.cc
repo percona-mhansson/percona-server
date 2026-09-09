@@ -8435,34 +8435,34 @@ int ha_innobase::open(const char *name, int, uint open_flags,
         trx_free_for_background(vec_load_trx);
 
         if (vec_load_err == DB_SUCCESS) {
-          for (const vec_aux_loaded_row_t &r : vec_aux_rows) {
-            fprintf(
-                stderr,
-                "[ha_innobase vector load from aux] id (label)=%zu layer=%zu\n",
-                static_cast<size_t>(std::get<0>(r)),
-                static_cast<size_t>(std::get<1>(r)));
+          // for (const vec_aux_loaded_row_t &r : vec_aux_rows) {
+          //   fprintf(
+          //       stderr,
+          //       "[ha_innobase vector load from aux] id (label)=%zu layer=%zu\n",
+          //       static_cast<size_t>(std::get<0>(r)),
+          //       static_cast<size_t>(std::get<1>(r)));
 
-            fprintf(stderr,
-                    "[ha_innobase vector load from aux] data_point as "
-                    "float[%zu]:\n",
-                    std::get<2>(r).size());
-            for (size_t d = 0; d < std::get<2>(r).size(); ++d) {
-              fprintf(stderr, "  [%zu]=%g\n", d,
-                      static_cast<double>(std::get<2>(r)[d]));
-            }
+          //   fprintf(stderr,
+          //           "[ha_innobase vector load from aux] data_point as "
+          //           "float[%zu]:\n",
+          //           std::get<2>(r).size());
+          //   for (size_t d = 0; d < std::get<2>(r).size(); ++d) {
+          //     fprintf(stderr, "  [%zu]=%g\n", d,
+          //             static_cast<double>(std::get<2>(r)[d]));
+          //   }
 
-            fprintf(stderr,
-                    "[ha_innobase vector load from aux] neighbors_by_level "
-                    "(%zu levels):\n",
-                    std::get<3>(r).size());
-            for (size_t lev = 0; lev < std::get<3>(r).size(); ++lev) {
-              fprintf(stderr, "  level %zu:", lev);
-              for (std::size_t nlab : std::get<3>(r)[lev]) {
-                fprintf(stderr, " %zu", nlab);
-              }
-              fprintf(stderr, "\n");
-            }
-          }
+          //   fprintf(stderr,
+          //           "[ha_innobase vector load from aux] neighbors_by_level "
+          //           "(%zu levels):\n",
+          //           std::get<3>(r).size());
+          //   for (size_t lev = 0; lev < std::get<3>(r).size(); ++lev) {
+          //     fprintf(stderr, "  level %zu:", lev);
+          //     for (std::size_t nlab : std::get<3>(r)[lev]) {
+          //       fprintf(stderr, " %zu", nlab);
+          //     }
+          //     fprintf(stderr, "\n");
+          //   }
+          // }
           try {
             hnsw->loadIndex(vec_aux_rows);
           } catch (const std::exception &e) {

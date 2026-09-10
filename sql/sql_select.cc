@@ -5287,37 +5287,50 @@ bool test_if_cheaper_ordering(const JOIN_TAB *tab, ORDER_with_src *order,
 
     // A vector index satisfies ORDER BY distance(); test_if_order_by_key()
     // can't see this, so recognise it via the VECTOR_KEYPART Key_use instead.
-    bool is_vector_key = false;
+    const Key_use *vector_key = nullptr;
     if (tab != nullptr && (table->key_info[nr].flags & HA_VECTOR)) {
       for (const Key_use *ku = tab->keyuse();
            ku != nullptr && ku->table_ref == tab->table_ref; ++ku) {
         if (ku->key == nr && ku->keypart == VECTOR_KEYPART) {
-          is_vector_key = true;
+          vector_key = ku;
           break;
         }
       }
     }
 
-    if (is_vector_key) {
+    if (vector_key != nullptr) {
       if (!usable_keys.is_set(nr)) continue;
 
       const double vec_limit = (select_limit == HA_POS_ERROR)
                                    ? static_cast<double>(table_records)
                                    : static_cast<double>(select_limit);
+      const constexpr double default_vector_size = 2096;
+      const constexpr double page_size = 4096;
       const double vector_scan_time =
-          vec_limit * table->file->page_read_cost(nr, 1.0);
+          vec_limit *
+          table->file->page_read_cost(nr, default_vector_size / page_size);
 
+      const double vector_read_cost = table->cost_model()->page_read_cost(vector_key->fanout);          
       // The non-vector plan must filesort its output to satisfy ORDER BY
       // distance(); the vector scan returns rows already ordered and skips it.
-      // Sort n rows until we have k rows to return
-      const double n = table_records * (fanout > 0 ? fanout : 1.0);
-      const double k = std::min<double>(vec_limit, n);
+      // The sort processes the rows returned by the current access method.
+      const double k = tab->position()->rows_fetched;
       const Cost_model_table *const cost_model = table->cost_model();
       const double sort_cost =
-          cost_model->row_evaluate_cost(n) * 2096 +
           cost_model->key_compare_cost(k * std::max(log2(k), 1.0));
 
       const double alt_cost = read_time + sort_cost;
+
+      fprintf(stderr, "---\n");
+      fprintf(stderr, "vector read cost: %f\n", vector_read_cost);
+      fprintf(stderr, "k: %f\n", k);
+      fprintf(stdout, "B-tree read time: %f\n", read_time);
+      fprintf(stdout, "sort cost: %f\n", sort_cost);
+      fprintf(stdout, "vector read time: %f\n", vector_scan_time);
+      fprintf(stdout, "alt cost: %f\n", alt_cost);
+      fprintf(stdout, "fanout: %f\n", fanout);
+      
+
       if (vector_scan_time < alt_cost &&
           (best_key < 0 || vector_scan_time < best_read_time)) {
         best_key = nr;

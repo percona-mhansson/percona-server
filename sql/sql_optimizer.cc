@@ -10946,7 +10946,8 @@ void JOIN::optimize_keyuse() {
       Constant tables are ignored.
       To avoid bad matches, we don't make ref_table_rows less than 100.
 
-      For vector indexes, we store the LIMIT in Key_use::ref_table_rows.
+      For vector indexes, add_vector_keys() stored the table row count in
+      Key_use::ref_table_rows; preserve it here instead of resetting.
     */
     if (keyuse->keypart != VECTOR_KEYPART)
       keyuse->ref_table_rows = ~(ha_rows)0;  // If no ref
@@ -11076,19 +11077,21 @@ static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
       if ((index.flags & HA_VECTOR) &&
           table->keys_in_use_for_query.is_set(idx) &&
           index.key_part[0].field->eq(column)) {
-        longlong limit = join->query_block->select_limit == nullptr
-                             ? 0
-                             : join->query_block->select_limit->val_int();
+        // Store the full table row count (not the query LIMIT) so the join
+        // planner costs a vector scan LIMIT-agnostically, like any other
+        // access method. The ORDER BY <distance> LIMIT advantage of a vector
+        // scan is applied separately in test_if_cheaper_ordering().
+        const ha_rows row_count = table->file->stats.records;
 
         const Key_use keyuse(tl, const_vector_expr,
                              const_vector_expr->used_tables(), idx,
                              VECTOR_KEYPART,
-                             0,            // optimize
-                             0,            // keypart_map
-                             limit,  // ref_table_rows
-                             false,        // null_rejecting
-                             nullptr,      // cond_guard
-                             UINT_MAX);    // sj_pred_no
+                             0,          // optimize
+                             0,          // keypart_map
+                             row_count,  // ref_table_rows
+                             false,      // null_rejecting
+                             nullptr,    // cond_guard
+                             UINT_MAX);  // sj_pred_no
         table->reginfo.join_tab->keys().set_bit(idx);
         return keyuse_array->push_back(keyuse);
       }

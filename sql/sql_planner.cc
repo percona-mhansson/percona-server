@@ -702,10 +702,20 @@ Key_use *Optimize_table_order::find_best_ref(
         continue;
       }
 
-      double limit = (keyuse - 1)->ref_table_rows;
+      double num_rows = (keyuse - 1)->ref_table_rows;
       cur_read_cost = prev_record_reads(join, idx, table_deps) *
-                      table->cost_model()->page_read_cost(1.0 * limit);
-      cur_fanout = limit == 0 ? ~(ha_rows)0 : limit;
+                      table->cost_model()->page_read_cost(1.0 * num_rows);
+
+      // // A vector row occupies roughly this fraction of a page.
+      // const constexpr double default_vector_size = 2096;
+      // const constexpr double page_size = 4096;
+      // cur_read_cost =
+      //     prev_record_reads(join, idx, table_deps) * limit *
+      //     table->file->page_read_cost(key, default_vector_size / page_size);
+      cur_fanout = num_rows == 0 ? ~(ha_rows)0 : num_rows;
+      fprintf(stderr, "num_rows: %f\n", num_rows);
+      fprintf(stderr, "cur_read_cost: %f\n", cur_read_cost);
+      fprintf(stderr, "cur_fanout: %f\n", cur_fanout);
     }
 
     start_key->bound_keyparts = found_part;

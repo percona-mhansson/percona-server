@@ -113,6 +113,7 @@
 #include "sql/sql_join_buffer.h"  // JOIN_CACHE
 #include "sql/sql_list.h"         // List_iterator_fast
 #include "sql/sql_planner.h"      // calculate_condition_filter
+#include "sql/sql_select.h"
 #include "sql/sql_test.h"         // print_where
 #include "sql/sql_tmp_table.h"
 #include "sql/system_variables.h"
@@ -146,6 +147,8 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
                                 table_map normal_tables,
                                 Query_block *query_block,
                                 SARGABLE_PARAM **sargables);
+static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
+                            table_map usable_tables);
 static bool pull_out_semijoin_tables(JOIN *join);
 static void add_loose_index_scan_and_skip_scan_keys(JOIN *join,
                                                     JOIN_TAB *join_tab);
@@ -2234,6 +2237,45 @@ class Plan_change_watchdog {
     1    We can use an index.
 */
 
+/**
+  Return the search item of a vector index @c key on @c tab, i.e. the constant
+  side of the ORDER BY distance() expression, or nullptr if @c key is not a
+  vector index registered for that ORDER BY. Used to recover the search item
+  after test_if_cheaper_ordering() has selected a vector index as best_key.
+*/
+static Item *vector_search_item(const JOIN_TAB *tab, int key) {
+  if (tab == nullptr || key < 0) return nullptr;
+  if (!(tab->table()->key_info[key].flags & HA_VECTOR)) return nullptr;
+  for (const Key_use *ku = tab->keyuse();
+       ku != nullptr && ku->table_ref == tab->table_ref; ++ku) {
+    if (ku->key == static_cast<uint>(key) && ku->keypart == VECTOR_KEYPART)
+      return ku->val;
+  }
+  return nullptr;
+}
+
+/**
+  Set up JT_VECTOR access on @c tab for the vector index @c key, searching for
+  @c vec_item and returning @c limit rows. Initializes the Index_lookup the same
+  way create_ref_for_key() does for a vector key, so that both execution and
+  EXPLAIN (which prints ref().items[0]) have complete information.
+
+  @retval false  success
+  @retval true   out of memory
+*/
+static bool setup_vector_index_access(THD *thd, JOIN_TAB *tab, int key,
+                                      Item *vec_item, ha_rows limit) {
+  if (init_ref(thd, /*keyparts=*/1, /*length=*/0, key, &tab->ref())) return true;
+  tab->ref().items[0] = vec_item;
+  tab->ref().cond_guards[0] = nullptr;
+  tab->ref().key_copy[0] = nullptr;
+  tab->set_type(JT_VECTOR);
+  tab->set_index(key);
+  tab->set_vec(vec_item);
+  tab->set_vec_limit(limit);
+  return false;
+}
+
 static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
                                     ha_rows select_limit, const bool no_changes,
                                     const Key_map *map, int *order_idx) {
@@ -2319,43 +2361,9 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
       }
     }
 
-    if (order.order && order.order->next == nullptr &&
-        order.order->direction != ORDER_DESC &&
-        is_function_of_type(*order.order->item, Item_func::VEC_DISTANCE_FUNC) &&
-        select_limit != HA_POS_ERROR) {
-      auto dist_func_item = down_cast<Item_func_vec_distance *>(
-          (*order.order->item)->real_item());
-      auto left_arg_item = dist_func_item->arguments()[0];
-      auto right_arg_item = dist_func_item->arguments()[1];
-
-      for (uint idx = 0; idx < table->s->keys; ++idx) {
-        if (table->key_info[idx].flags & HA_VECTOR) {
-          if (left_arg_item->type() == Item::FIELD_ITEM &&
-              down_cast<const Item_field *>(left_arg_item)->field ==
-                  table->key_info[idx].key_part[0].field &&
-              right_arg_item->const_for_execution()) {
-            fprintf(stderr, "FOUND VECTOR INDEX 1\n");
-            tab->set_type(JT_VECTOR);
-            tab->ref().key = idx;
-            tab->ref().key_parts = 0;
-            tab->set_index(idx);
-            tab->set_vec(right_arg_item);
-            tab->set_vec_limit(select_limit);
-            return true;
-          } else if (right_arg_item->type() == Item::FIELD_ITEM &&
-                     down_cast<const Item_field *>(right_arg_item)->field ==
-                         table->key_info[idx].key_part[0].field &&
-                     left_arg_item->const_for_execution()) {
-            fprintf(stderr, "FOUND VECTOR INDEX 2\n");
-            tab->set_type(JT_VECTOR);
-            tab->ref().key = idx;
-            tab->ref().key_parts = 0;
-            tab->set_index(idx);
-            tab->set_vec(left_arg_item);
-            tab->set_vec_limit(select_limit);
-            return true;
-          }
-        }
+    if (order.order != nullptr && order.order->next == nullptr) {
+      if (tab->type() == JT_VECTOR) {
+        return true;
       }
     }
   }
@@ -2368,13 +2376,18 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
 
   for (ORDER *tmp_order = order.order; tmp_order; tmp_order = tmp_order->next) {
     const Item *item = (*tmp_order->item)->real_item();
-    if (item->type() != Item::FIELD_ITEM) {
+    if (item->type() != Item::FIELD_ITEM &&
+        (item->type() != Item::FUNC_ITEM ||
+         down_cast<const Item_func *>(item)->functype() !=
+             Item_func::VEC_DISTANCE_FUNC)) {
       usable_keys.clear_all();
       return false;
     }
-    usable_keys.intersect(
-        down_cast<const Item_field *>(item)->field->part_of_sortkey);
-    if (usable_keys.is_clear_all()) return false;  // No usable keys
+    if (item->type() == Item::FIELD_ITEM) {
+      usable_keys.intersect(
+          down_cast<const Item_field *>(item)->field->part_of_sortkey);
+      if (usable_keys.is_clear_all()) return false;  // No usable keys
+    }
   }
   if (tab->type() == JT_REF_OR_NULL || tab->type() == JT_FT) return false;
 
@@ -2540,6 +2553,16 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
                                select_limit, &best_key, &best_key_direction,
                                &select_limit, &best_key_parts,
                                &saved_best_key_parts, &best_read_time);
+
+    // A vector index answers the ORDER BY directly; set up JT_VECTOR access.
+    Item *vec_item = vector_search_item(tab, best_key);
+    if (vec_item != nullptr) {
+      if (!no_changes &&
+          setup_vector_index_access(thd, tab, best_key, vec_item, select_limit))
+        return false;
+      can_skip_sorting = true;
+      goto fix_ICP;
+    }
 
     // Try backward scan for previously found key
     if (best_key < 0 && order_direction < 0) goto check_reverse_order;
@@ -5462,7 +5485,9 @@ bool JOIN::make_join_plan() {
     trace_table_dependencies(trace, join_tab, primary_tables);
 
   // Build the key access information, which is the basis for ref access.
-  if (where_cond || query_block->outer_join) {
+  // A vector distance ORDER BY can enable a vector index scan even without a
+  // WHERE clause, so also build key access information in that case.
+  if (where_cond || query_block->outer_join || query_block->has_vector_funcs()) {
     if (update_ref_and_keys(thd, &keyuse_array, join_tab, tables, where_cond,
                             ~query_block->outer_join, query_block, &sargables))
       return true;
@@ -8537,6 +8562,8 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
     if (add_ft_keys(keyuse, cond, normal_tables, true)) return true;
   }
 
+  if (add_vector_keys(keyuse, query_block->join, normal_tables)) return true;
+
   /*
     Sort the array of possible keys and remove the following key parts:
     - ref if there is a keypart which is a ref and a const.
@@ -8566,7 +8593,7 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
       if (use->val->const_for_execution() &&
           use->optimize != KEY_OPTIMIZE_REF_OR_NULL)
         table->const_key_parts[use->key] |= use->keypart_map;
-      if (use->keypart != FT_KEYPART) {
+      if (use->keypart != FT_KEYPART && use->keypart != VECTOR_KEYPART) {
         if (use->key == prev->key && use->table_ref == prev->table_ref) {
           if (prev->keypart + 1 < use->keypart ||
               (prev->keypart == use->keypart && found_eq_constant))
@@ -10041,9 +10068,16 @@ static bool make_join_query_block(JOIN *join, Item *cond) {
                 test_if_cheaper_ordering(
                     tab, &join->order, tab->table(), usable_keys, -1,
                     select_limit, &best_key, &read_direction, &select_limit);
+                Item *vec_item = vector_search_item(tab, best_key);
                 if (best_key < 0)
                   recheck_reason = DONT_RECHECK;  // No usable keys
-                else {
+                else if (vec_item != nullptr) {
+                  // A vector index answers the ORDER BY directly.
+                  if (setup_vector_index_access(thd, tab, best_key, vec_item,
+                                                select_limit))
+                    return true;
+                  recheck_reason = DONT_RECHECK;
+                } else {
                   // Only usable_key is the best_key chosen
                   usable_keys.clear_all();
                   usable_keys.set_bit(best_key);
@@ -10967,8 +11001,12 @@ void JOIN::optimize_keyuse() {
       gives 5000/100 = 50 records per key
       Constant tables are ignored.
       To avoid bad matches, we don't make ref_table_rows less than 100.
+
+      For vector indexes, add_vector_keys() stored the table row count in
+      Key_use::ref_table_rows; preserve it here instead of resetting.
     */
-    keyuse->ref_table_rows = ~(ha_rows)0;  // If no ref
+    if (keyuse->keypart != VECTOR_KEYPART)
+      keyuse->ref_table_rows = ~(ha_rows)0;  // If no ref
     if (keyuse->used_tables &
         (map = keyuse->used_tables & ~(const_table_map | PSEUDO_TABLE_BITS))) {
       uint tableno;
@@ -11043,6 +11081,79 @@ bool JOIN::optimize_fts_query() {
   }
 
   return init_ftfuncs(thd, query_block);
+}
+
+/**
+  Add a Key_use for a vector index if the ORDER BY clause contains a vector
+  distance function over a column that has a vector index. Registering a
+  Key_use (with the VECTOR_KEYPART sentinel keypart) lets the join planner
+  consider a vector index scan; the actual JT_VECTOR access is set up later in
+  create_ref_for_key(). Modeled after add_ft_keys().
+
+  @param keyuse_array   array of all Key_use elements for the query block
+  @param join           the join being optimized
+  @param usable_tables  tables that can be used as the vector index table
+
+  @retval false  no error (a Key_use may or may not have been added)
+  @retval true   out of memory while adding the Key_use
+*/
+static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
+                            table_map usable_tables) {
+  for (const ORDER *order = join->order.order; order != nullptr;
+       order = order->next) {
+    if (order->direction != ORDER_ASC) continue;
+    if ((*order->item)->type() != Item::FUNC_ITEM) continue;
+    Item_func *const dist_fn = down_cast<Item_func *>(*order->item);
+    if (dist_fn->functype() != Item_func::VEC_DISTANCE_FUNC) continue;
+
+    Item *const arg1 = dist_fn->arguments()[0]->real_item();
+    Item *const arg2 = dist_fn->arguments()[1]->real_item();
+
+    Item *const_vector_expr;
+    const Field *column;
+    if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
+      column = down_cast<Item_field *>(arg1)->field;
+      const_vector_expr = arg2;
+    } else if (arg2->type() == Item::FIELD_ITEM &&
+               arg1->const_for_execution()) {
+      column = down_cast<Item_field *>(arg2)->field;
+      const_vector_expr = arg1;
+    } else {
+      continue;
+    }
+
+    if (column->type() != MYSQL_TYPE_VECTOR) continue;
+
+    TABLE *const table = column->table;
+    Table_ref *const tl = table->pos_in_table_list;
+    if (!(usable_tables & tl->map())) continue;
+
+    for (uint idx = 0; idx < table->s->keys; ++idx) {
+      const KEY &index = table->key_info[idx];
+      if ((index.flags & HA_VECTOR) &&
+          table->keys_in_use_for_query.is_set(idx) &&
+          index.key_part[0].field->eq(column)) {
+        // Store the full table row count (not the query LIMIT) so the join
+        // planner costs a vector scan LIMIT-agnostically, like any other
+        // access method. The ORDER BY <distance> LIMIT advantage of a vector
+        // scan is applied separately in test_if_cheaper_ordering().
+        const ha_rows row_count = table->file->stats.records;
+
+        const Key_use keyuse(tl, const_vector_expr,
+                             const_vector_expr->used_tables(), idx,
+                             VECTOR_KEYPART,
+                             0,          // optimize
+                             0,          // keypart_map
+                             row_count,  // ref_table_rows
+                             false,      // null_rejecting
+                             nullptr,    // cond_guard
+                             UINT_MAX);  // sj_pred_no
+        table->reginfo.join_tab->keys().set_bit(idx);
+        return keyuse_array->push_back(keyuse);
+      }
+    }
+  }
+  return false;
 }
 
 /**

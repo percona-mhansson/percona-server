@@ -10945,6 +10945,21 @@ ER_LOG_NAME_NOT_MATCHING_SEC_LOG_PATH_CLIENT
 
 
 #
+# Start of Percona Server 9.5 error messages to be sent to client
+#
+
+ER_VECTOR_INDEX_NEEDS_PK
+  eng "Vector index can only be created in tables with a BIGINT UNSIGNED primary key."
+
+ER_ONLY_SINGLE_VECTOR_INDEX_ALLOWED
+  eng "A table can have at most one vector index."
+
+#
+# End of Percona Server 9.5 client messages
+#
+
+
+#
 # Start of MyRocks specific messages to be sent to client
 #
 

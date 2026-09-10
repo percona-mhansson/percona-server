@@ -8689,10 +8689,10 @@ bool mysql_prepare_create_table(
       }
       primary_key = true;
     }
-    // Disallow more than one VECTOR index on the table.
+
     if (key->type == KEYTYPE_VECTOR) {
       if (vector_key_number) {
-        my_error(ER_UNKNOWN_ERROR, MYF(0));
+        my_error(ER_ONLY_SINGLE_VECTOR_INDEX_ALLOWED, MYF(0));
         return true;
       }
       ++vector_key_number;
@@ -8732,7 +8732,7 @@ bool mysql_prepare_create_table(
 
   // We allow VECTOR keys only with tables with PK
   if (!primary_key && vector_key_number) {
-    my_error(ER_UNKNOWN_ERROR, MYF(0));
+    my_error(ER_VECTOR_INDEX_NEEDS_PK, MYF(0));
     return true;
   }
 
@@ -8780,7 +8780,7 @@ bool mysql_prepare_create_table(
     }
     assert(sql_field);
     if (sql_field->sql_type != MYSQL_TYPE_LONGLONG || !sql_field->is_unsigned) {
-      my_error(ER_UNKNOWN_ERROR, MYF(0));
+      my_error(ER_VECTOR_INDEX_NEEDS_PK, MYF(0));
       return true;
     }
   }

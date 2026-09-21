@@ -33,6 +33,7 @@
 #include "mem_root_deque.h"
 #include "my_base.h"
 #include "my_bitmap.h"  // bitmap_bits_set
+#include "sql/field.h"
 #include "sql/handler.h"
 #include "sql/histograms/histogram.h"
 #include "sql/item_func.h"
@@ -710,6 +711,34 @@ void EstimateSortCost(THD *thd, AccessPath *path, double distinct_rows) {
 
   path->num_output_rows_before_filter = path->num_output_rows();
   path->set_cost_before_filter(path->cost());
+}
+
+double EstimateVectorSearchCost(const TABLE *table, unsigned key_idx,
+                                ha_rows limit) {
+  const double num_rows = std::max<double>(table->file->stats.records, 1.0);
+  const double k = std::min<double>(limit, num_rows);
+
+  // Dimensionality of the indexed vector column drives the per-distance cost.
+  const Field *const field = table->key_info[key_idx].key_part[0].field;
+  double dimensions =
+      down_cast<const Field_vector *>(field)->get_max_dimensions();
+  if (dimensions <= 0.0) {
+    dimensions = 128.0;  // Fallback if the column width is unknown.
+  }
+
+  // HNSW greedy search explores a candidate list of width ~ef_search over
+  // O(log N) hops, so the number of distance computations is roughly
+  // ef_search * log2(N). ef_search is at least the LIMIT.
+  const double candidates = std::max(k, kVectorSearchDefaultCandidates);
+  const double distance_computations =
+      candidates * std::max(log2(num_rows), 1.0);
+  const double search_cost =
+      distance_computations * dimensions * kVectorDistanceElementCost;
+
+  // Materialize the k nearest base rows (primary-key lookups).
+  const double fetch_cost = RowReadCostTable(table, k);
+
+  return search_cost + fetch_cost;
 }
 
 void AddCost(THD *thd, const ContainedSubquery &subquery, double num_rows,

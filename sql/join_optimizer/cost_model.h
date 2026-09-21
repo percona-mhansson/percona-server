@@ -156,6 +156,20 @@ void EstimateSortCost(THD *thd, AccessPath *path,
 
 void EstimateMaterializeCost(THD *thd, AccessPath *path);
 
+/**
+  Estimate the cost of an approximate nearest-neighbour (HNSW) vector index
+  scan on 'key_idx' that returns 'limit' rows. The cost is sublinear in the
+  table size (graph traversal is roughly logarithmic), unlike a full scan and
+  sort.
+
+  @param table The table to scan.
+  @param key_idx The vector index in table->key_info[].
+  @param limit The number of rows the scan returns (the query LIMIT).
+  @returns The estimated cost of the scan.
+*/
+double EstimateVectorSearchCost(const TABLE *table, unsigned key_idx,
+                                ha_rows limit);
+
 /// Array of aggregation terms.
 using TermArray = std::span<const Item *const>;
 

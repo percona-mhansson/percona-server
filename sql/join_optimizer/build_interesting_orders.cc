@@ -42,6 +42,7 @@
 #include "sql/item_cmpfunc.h"
 #include "sql/item_func.h"
 #include "sql/item_row.h"
+#include "sql/item_strfunc.h"
 #include "sql/join_optimizer/access_path.h"
 #include "sql/join_optimizer/bit_utils.h"
 #include "sql/join_optimizer/interesting_orders.h"
@@ -499,6 +500,60 @@ static void CollectOrderingsFromSpatialIndex(
   // The use of index is currently not supported for this case.
 }
 
+static void CollectOrderingsFromVectorIndex(
+    THD *thd, TABLE *table, int key_idx, LogicalOrderings *orderings,
+    Mem_root_array<VectorDistanceScanInfo> *vector_indexes) {
+  // A vector index orders on a single vector column; only its first key part
+  // is meaningful for the distance ordering.
+  const Field *const indexed_field = table->key_info[key_idx].key_part[0].field;
+
+  for (int i = 1; i < orderings->num_items(); ++i) {
+    Item *const current_item = orderings->item(i);
+    if (current_item->type() != Item::FUNC_ITEM) continue;
+    Item_func *const item_func = down_cast<Item_func *>(current_item);
+    if (item_func->functype() != Item_func::VECTOR_DISTANCE_FUNC ||
+        item_func->arg_count != 2) {
+      continue;
+    }
+
+    // The index metric is (squared) euclidean; other query metrics order
+    // differently and must fall back to the exact (sort) path.
+    if (!down_cast<Item_func_vector_distance *>(item_func)->l2_index_servable()) {
+      continue;
+    }
+
+    Item *const arg1 = item_func->arguments()[0]->real_item();
+    Item *const arg2 = item_func->arguments()[1]->real_item();
+
+    // One side must be the indexed vector column, the other a constant vector.
+    Item *search_item = nullptr;
+    if (arg1->type() == Item::FIELD_ITEM &&
+        down_cast<Item_field *>(arg1)->field->eq(indexed_field) &&
+        arg2->const_for_execution()) {
+      search_item = item_func->arguments()[1];
+    } else if (arg2->type() == Item::FIELD_ITEM &&
+               down_cast<Item_field *>(arg2)->field->eq(indexed_field) &&
+               arg1->const_for_execution()) {
+      search_item = item_func->arguments()[0];
+    } else {
+      continue;
+    }
+
+    VectorDistanceScanInfo index_info;
+    index_info.table = table;
+    index_info.key_idx = key_idx;
+    index_info.search_item = search_item;
+
+    OrderElement order_element{i, ORDER_ASC};
+    Ordering::Elements elements{&order_element, 1};
+    index_info.forward_order = orderings->AddOrdering(
+        thd, Ordering(elements, Ordering::Kind::kOrder),
+        /*interesting=*/false,
+        /*used_at_end=*/true, /*homogenize_tables=*/0);
+    vector_indexes->push_back(index_info);
+  }
+}
+
 void BuildInterestingOrders(
     THD *thd, JoinHypergraph *graph, Query_block *query_block,
     LogicalOrderings *orderings,
@@ -506,6 +561,7 @@ void BuildInterestingOrders(
     int *order_by_ordering_idx, int *group_by_ordering_idx,
     int *distinct_ordering_idx, Mem_root_array<ActiveIndexInfo> *active_indexes,
     Mem_root_array<SpatialDistanceScanInfo> *spatial_indexes,
+    Mem_root_array<VectorDistanceScanInfo> *vector_indexes,
     Mem_root_array<FullTextIndexInfo> *fulltext_searches) {
   JOIN *const join = query_block->join;
 
@@ -680,6 +736,10 @@ void BuildInterestingOrders(
       if (Overlaps(table->key_info[key_idx].flags, HA_SPATIAL)) {
         CollectOrderingsFromSpatialIndex(thd, table, key_idx, orderings,
                                          spatial_indexes);
+      }
+      if (Overlaps(table->key_info[key_idx].flags, HA_VECTOR)) {
+        CollectOrderingsFromVectorIndex(thd, table, key_idx, orderings,
+                                        vector_indexes);
       }
       ActiveIndexInfo index_info;
       index_info.table = table;

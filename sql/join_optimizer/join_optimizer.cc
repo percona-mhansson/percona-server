@@ -4112,13 +4112,10 @@ bool CostingReceiver::ProposeVectorIndexScan(
   // Report the full table row count so that this path is consistent with the
   // other access paths for this node (the row-count consistency check requires
   // it); the LIMIT is applied by a separate LimitOffset path on top. The scan
-  // avoids a later sort, which is where its advantage comes from.
-  // TODO: make this cost sublinear (ANN is roughly k*log(N)) once the storage
-  // engine can supply a vector-search cost estimate.
+  // itself is costed for the k-nearest search, which is sublinear in the table
+  // size, so it can beat a full scan followed by a sort.
   const double num_output_rows = table->file->stats.records;
-  const double cost =
-      table->file->read_cost(key_idx, /*ranges=*/1.0, num_output_rows)
-          .total_cost();
+  const double cost = EstimateVectorSearchCost(table, key_idx, limit);
 
   path.num_output_rows_before_filter = num_output_rows;
   path.set_init_cost(0.0);

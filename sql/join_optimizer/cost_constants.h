@@ -153,6 +153,18 @@ constexpr double kSortComparisonCost = 0.014 / kUnitCostInMicroseconds;
 constexpr double kDedupOneRowCost = 0.1 / kUnitCostInMicroseconds;
 constexpr double kWindowOneRowCost = 0.1 / kUnitCostInMicroseconds;
 
+/// Cost of computing the distance between two vectors, per dimension (one
+/// multiply-add plus the element load). Used to cost approximate
+/// nearest-neighbour (HNSW) vector index scans. Roughly 1ns per element; in
+/// need of proper calibration.
+constexpr double kVectorDistanceElementCost = 0.001 / kUnitCostInMicroseconds;
+
+/// Representative HNSW candidate-list width (ef_search) assumed when costing a
+/// vector index scan whose LIMIT is smaller. The engine's actual ef_search is
+/// not visible to the optimizer; this is a coarse proxy for the exploration
+/// width that drives ANN search cost.
+constexpr double kVectorSearchDefaultCandidates = 64.0;
+
 /// The new Hypergraph cost model no longer uses these constants.
 constexpr double kAggregateOneRowCostOldModel = 0.1 / kUnitCostInMicroseconds;
 constexpr double kMaterializeOneRowCostOldModel = 0.1 / kUnitCostInMicroseconds;

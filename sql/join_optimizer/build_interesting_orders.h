@@ -114,6 +114,16 @@ struct SpatialDistanceScanInfo {
   double coordinates[5];
 };
 
+// A vector index that we can use in an approximate-nearest-neighbour query to
+// get an interesting ordering (ORDER BY VECTOR_DISTANCE(col, <const>)).
+struct VectorDistanceScanInfo {
+  TABLE *table;
+  int key_idx;
+  // The constant query vector (the non-column side of the distance function).
+  Item *search_item;
+  LogicalOrderings::StateIndex forward_order = 0;
+};
+
 // A full-text index that we can use in the query, either for index lookup or
 // for scanning along to get an interesting order.
 struct FullTextIndexInfo {
@@ -137,6 +147,7 @@ void BuildInterestingOrders(
     int *order_by_ordering_idx, int *group_by_ordering_idx,
     int *distinct_ordering_idx, Mem_root_array<ActiveIndexInfo> *active_indexes,
     Mem_root_array<SpatialDistanceScanInfo> *spatial_indexes,
+    Mem_root_array<VectorDistanceScanInfo> *vector_indexes,
     Mem_root_array<FullTextIndexInfo> *fulltext_searches);
 
 // Build an ORDER * that we can give to Filesort. It is only suitable for

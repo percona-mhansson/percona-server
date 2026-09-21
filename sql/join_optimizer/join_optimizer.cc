@@ -319,6 +319,7 @@ class CostingReceiver {
       const Mem_root_array<SortAheadOrdering> *sort_ahead_orderings,
       const Mem_root_array<ActiveIndexInfo> *active_indexes,
       const Mem_root_array<SpatialDistanceScanInfo> *spatial_indexes,
+      const Mem_root_array<VectorDistanceScanInfo> *vector_indexes,
       const Mem_root_array<FullTextIndexInfo> *fulltext_searches,
       NodeMap fulltext_tables, uint64_t sargable_fulltext_predicates,
       table_map immediate_update_delete_candidates, bool need_rowid,
@@ -335,6 +336,7 @@ class CostingReceiver {
         m_sort_ahead_orderings{sort_ahead_orderings},
         m_active_indexes{active_indexes},
         m_spatial_indexes{spatial_indexes},
+        m_vector_indexes{vector_indexes},
         m_fulltext_searches{fulltext_searches},
         m_fulltext_tables{fulltext_tables},
         m_sargable_fulltext_predicates{sargable_fulltext_predicates},
@@ -546,6 +548,9 @@ class CostingReceiver {
 
   /// List of all active spatial indexes that we can apply in this query.
   const Mem_root_array<SpatialDistanceScanInfo> *m_spatial_indexes;
+
+  /// List of all active vector indexes that we can apply in this query.
+  const Mem_root_array<VectorDistanceScanInfo> *m_vector_indexes;
 
   /// List of all active full-text indexes that we can apply in this query.
   const Mem_root_array<FullTextIndexInfo> *m_fulltext_searches;
@@ -831,6 +836,10 @@ class CostingReceiver {
                                 double force_num_output_rows_after_filter,
                                 const SpatialDistanceScanInfo &order_info,
                                 int ordering_idx);
+  bool ProposeVectorIndexScan(TABLE *table, int node_idx,
+                              double force_num_output_rows_after_filter,
+                              const VectorDistanceScanInfo &order_info,
+                              int ordering_idx);
   bool ProposeAllUniqueIndexLookupsWithConstantKey(int node_idx, bool *found);
   bool RedundantThroughSargable(
       OverflowBitset redundant_against_sargable_predicates,
@@ -1922,6 +1931,22 @@ bool CostingReceiver::FoundSingleNode(int node_idx) {
     if (table->force_index || order != 0) {
       if (ProposeDistanceIndexScan(table, node_idx, range_result.row_estimate,
                                    order_info, order)) {
+        return true;
+      }
+    }
+    found_index_scan = true;
+  }
+
+  for (const VectorDistanceScanInfo &order_info : *m_vector_indexes) {
+    if (order_info.table != table) {
+      continue;
+    }
+
+    const int order = m_orderings->RemapOrderingIndex(order_info.forward_order);
+
+    if (table->force_index || order != 0) {
+      if (ProposeVectorIndexScan(table, node_idx, range_result.row_estimate,
+                                 order_info, order)) {
         return true;
       }
     }
@@ -4027,6 +4052,73 @@ bool CostingReceiver::ProposeDistanceIndexScan(
   // Same cost estimation for index scan and distance index scan.
   cost = table->file->read_cost(key_idx, /*ranges=*/1.0, num_output_rows)
              .total_cost();
+
+  path.num_output_rows_before_filter = num_output_rows;
+  path.set_init_cost(0.0);
+  path.set_init_once_cost(0.0);
+  path.set_cost(cost);
+  path.set_cost_before_filter(cost);
+  if (IsBitSet(node_idx, m_immediate_update_delete_candidates)) {
+    path.immediate_update_delete_table = node_idx;
+    // Don't allow immediate update of the key that is being scanned.
+    if (IsUpdateStatement(m_thd) &&
+        is_key_used(table, key_idx, table->write_set)) {
+      path.immediate_update_delete_table = -1;
+    }
+  }
+
+  ProposeAccessPathForBaseTable(node_idx, force_num_output_rows_after_filter,
+                                table->key_info[key_idx].name, &path);
+  return false;
+}
+
+bool CostingReceiver::ProposeVectorIndexScan(
+    TABLE *table, int node_idx, double force_num_output_rows_after_filter,
+    const VectorDistanceScanInfo &order_info, int ordering_idx) {
+  const unsigned int key_idx = order_info.key_idx;
+
+  // The approximate (HNSW) scan only makes sense when bounded by a LIMIT, since
+  // it returns the k nearest rows. select_limit_cnt already includes any
+  // OFFSET. With SQL_CALC_FOUND_ROWS we cannot bound the scan.
+  const Query_expression *query_expression =
+      m_query_block->join->query_expression();
+  const ha_rows limit = m_query_block->join->calc_found_rows
+                            ? HA_POS_ERROR
+                            : query_expression->select_limit_cnt;
+  if (limit == HA_POS_ERROR) {
+    return false;
+  }
+
+  // Set up the Index_lookup the same way create_ref_for_key() does for a vector
+  // key, so both execution and EXPLAIN have complete information.
+  Index_lookup *ref = new (m_thd->mem_root) Index_lookup;
+  if (ref == nullptr ||
+      init_ref(m_thd, /*keyparts=*/1, /*length=*/0, key_idx, ref)) {
+    return true;
+  }
+  ref->items[0] = order_info.search_item;
+  ref->cond_guards[0] = nullptr;
+  ref->key_copy[0] = nullptr;
+
+  AccessPath path;
+  path.type = AccessPath::VECTOR_SEARCH;
+  path.vector_search().table = table;
+  path.vector_search().ref = ref;
+  path.vector_search().item = order_info.search_item;
+  path.vector_search().limit = limit;
+
+  path.ordering_state = m_orderings->SetOrder(ordering_idx);
+
+  // Report the full table row count so that this path is consistent with the
+  // other access paths for this node (the row-count consistency check requires
+  // it); the LIMIT is applied by a separate LimitOffset path on top. The scan
+  // avoids a later sort, which is where its advantage comes from.
+  // TODO: make this cost sublinear (ANN is roughly k*log(N)) once the storage
+  // engine can supply a vector-search cost estimate.
+  const double num_output_rows = table->file->stats.records;
+  const double cost =
+      table->file->read_cost(key_idx, /*ranges=*/1.0, num_output_rows)
+          .total_cost();
 
   path.num_output_rows_before_filter = num_output_rows;
   path.set_init_cost(0.0);
@@ -9373,6 +9465,7 @@ static AccessPath *FindBestQueryPlanInner(THD *thd, Query_block *query_block,
   Mem_root_array<SortAheadOrdering> sort_ahead_orderings(thd->mem_root);
   Mem_root_array<ActiveIndexInfo> active_indexes(thd->mem_root);
   Mem_root_array<SpatialDistanceScanInfo> spatial_indexes(thd->mem_root);
+  Mem_root_array<VectorDistanceScanInfo> vector_indexes(thd->mem_root);
   Mem_root_array<FullTextIndexInfo> fulltext_searches(thd->mem_root);
   int order_by_ordering_idx = -1;
   int group_by_ordering_idx = -1;
@@ -9380,7 +9473,8 @@ static AccessPath *FindBestQueryPlanInner(THD *thd, Query_block *query_block,
   BuildInterestingOrders(thd, &graph, query_block, &orderings,
                          &sort_ahead_orderings, &order_by_ordering_idx,
                          &group_by_ordering_idx, &distinct_ordering_idx,
-                         &active_indexes, &spatial_indexes, &fulltext_searches);
+                         &active_indexes, &spatial_indexes, &vector_indexes,
+                         &fulltext_searches);
 
   const NodeMap nodes_under_limit =
       GetNodesUnderLimit(graph, orderings, distinct_ordering_idx);
@@ -9411,10 +9505,10 @@ static AccessPath *FindBestQueryPlanInner(THD *thd, Query_block *query_block,
 
   CostingReceiver receiver(
       thd, query_block, graph, &orderings, &sort_ahead_orderings,
-      &active_indexes, &spatial_indexes, &fulltext_searches, fulltext_tables,
-      sargable_fulltext_predicates, immediate_update_delete_candidates,
-      need_rowid, nodes_under_limit, EngineFlags(thd), *subgraph_pair_limit,
-      secondary_engine_cost_hook,
+      &active_indexes, &spatial_indexes, &vector_indexes, &fulltext_searches,
+      fulltext_tables, sargable_fulltext_predicates,
+      immediate_update_delete_candidates, need_rowid, nodes_under_limit,
+      EngineFlags(thd), *subgraph_pair_limit, secondary_engine_cost_hook,
       secondary_engine_optimizer_request_state_hook);
   if (graph.nodes.size() == 1) {
     // Fast path for single-table queries. No need to run the join enumeration
@@ -9461,8 +9555,8 @@ static AccessPath *FindBestQueryPlanInner(THD *thd, Query_block *query_block,
       // effect as well and do a full reset.
       receiver = CostingReceiver(
           thd, query_block, graph, &orderings, &sort_ahead_orderings,
-          &active_indexes, &spatial_indexes, &fulltext_searches,
-          fulltext_tables, sargable_fulltext_predicates,
+          &active_indexes, &spatial_indexes, &vector_indexes,
+          &fulltext_searches, fulltext_tables, sargable_fulltext_predicates,
           immediate_update_delete_candidates, need_rowid, nodes_under_limit,
           EngineFlags(thd), *subgraph_pair_limit, secondary_engine_cost_hook,
           secondary_engine_optimizer_request_state_hook);

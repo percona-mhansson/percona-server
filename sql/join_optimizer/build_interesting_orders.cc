@@ -510,9 +510,8 @@ static void CollectOrderingsFromVectorIndex(
   for (int i = 1; i < orderings->num_items(); ++i) {
     Item *const current_item = orderings->item(i);
     if (current_item->type() != Item::FUNC_ITEM) continue;
-    Item_func *const item_func = down_cast<Item_func *>(current_item);
-    if (item_func->functype() != Item_func::VECTOR_DISTANCE_FUNC ||
-        item_func->arg_count != 2) {
+    const auto item_func = down_cast<Item_func *>(current_item);
+    if (item_func->functype() != Item_func::VECTOR_DISTANCE_FUNC) {
       continue;
     }
 

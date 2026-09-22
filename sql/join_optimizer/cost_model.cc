@@ -720,11 +720,16 @@ double EstimateVectorSearchCost(const TABLE *table, unsigned key_idx,
 
   // Dimensionality of the indexed vector column drives the per-distance cost.
   const Field *const field = table->key_info[key_idx].key_part[0].field;
-  double dimensions =
-      down_cast<const Field_vector *>(field)->get_max_dimensions();
-  if (dimensions <= 0.0) {
-    dimensions = 128.0;  // Fallback if the column width is unknown.
+  double dimensions = 0;
+
+  for (Field **pr = table->field; *pr != nullptr; ++pr) {
+    if (strcmp((*pr)->field_name, field->field_name) == 0) {
+      dimensions = std::max(dimensions, static_cast<double>(
+          down_cast<const Field_vector *>(*pr)->get_max_dimensions()));
+    }
   }
+
+  assert(dimensions > 0.0);
 
   // HNSW greedy search explores a candidate list of width ~ef_search over
   // O(log N) hops, so the number of distance computations is roughly
@@ -733,7 +738,7 @@ double EstimateVectorSearchCost(const TABLE *table, unsigned key_idx,
   const double distance_computations =
       candidates * std::max(log2(num_rows), 1.0);
   const double search_cost =
-      distance_computations * dimensions * kVectorDistanceElementCost;
+      distance_computations * /* dimensions * */ kVectorDistanceElementCost;
 
   // Materialize the k nearest base rows (primary-key lookups).
   const double fetch_cost = RowReadCostTable(table, k);

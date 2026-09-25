@@ -30,7 +30,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <algorithm>
 #include <cassert>
 #include <cctype>
-#include <charconv>
 #include <cstdlib>
 #include <string>
 #include <variant>
@@ -53,6 +52,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "key_spec.h"
 #include "my_sys.h"
 #include "mysqld_error.h"
+#include "vec0detail.h"
 
 using namespace std;
 
@@ -80,6 +80,16 @@ const char *alg_to_string(ha_key_alg alg) {
 }  // namespace
 
 namespace storage::innobase::vec {
+
+namespace {
+// A fresh copy is needed for each parse, since Property tracks per-parse
+// duplicate-use state.
+auto make_hnsw_properties() {
+  using detail::Property;
+  return detail::AllProperties{Property{"M", &HnswParam::M},
+                                Property{"metric", &HnswParam::metric}};
+}
+}  // namespace
 
 bool validate_options(const Key_spec &index_def) {
   VectorIndexParam vip;
@@ -111,31 +121,23 @@ bool parse_options(const Key_spec &index_def, VectorIndexParam &vip) {
                     "HNSW") == 0) {
     vip = HnswParam();
     auto &hnsw_param = vip.emplace<HnswParam>();
+    auto properties = make_hnsw_properties();
     for (const auto &[key, value] :
          index_def.key_create_info.vector_index_params) {
-      if (my_strcasecmp(system_charset_info, key.str, "M") == 0) {
-        const auto *last = value.str + value.length;
-        int val;
-        auto result = std::from_chars(value.str, last, val);
-        if (result.ptr == last && result.ec == errc())
-          hnsw_param.M = val;
-        else {
+      switch (properties.apply(key, value, hnsw_param)) {
+        case detail::Result::kOk:
+          break;
+        case detail::Result::kBadValue:
           my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER_VALUE, MYF(0),
                    value.str);
           return true;
-        }
-      } else if (my_strcasecmp(system_charset_info, key.str, "metric") == 0) {
-        std::string_view name(value.str, value.length);
-        const auto *m = vector_constants::metric_from_name(name);
-        if (m == nullptr) {
-          my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER_VALUE, MYF(0),
-                   value.str);
+        case detail::Result::kDuplicate:
+          my_error(ER_DUPLICATE_INDEX_CONSTRUCTION_PARAMETER, MYF(0),
+                   key.str);
           return true;
-        }
-        hnsw_param.metric = *m;
-      } else {
-        my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER, MYF(0), key.str);
-        return true;
+        case detail::Result::kNotFound:
+          my_error(ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER, MYF(0), key.str);
+          return true;
       }
     }
 

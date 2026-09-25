@@ -11130,6 +11130,10 @@ ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER
 ER_ILLEGAL_INDEX_CONSTRUCTION_PARAMETER_VALUE
   eng "Illegal index construction parameter value: %.20s."
 
+ER_DUPLICATE_INDEX_CONSTRUCTION_PARAMETER
+  eng "Duplicate index construction parameter: %.20s."
+
+
 start-error-number 7100
 
 #

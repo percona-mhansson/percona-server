@@ -46,6 +46,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -146,7 +147,7 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
                                 table_map normal_tables,
                                 Query_block *query_block,
                                 SARGABLE_PARAM **sargables);
-static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
+static bool add_vector_keys(THD *thd, Key_use_array *keyuse_array, JOIN *join,
                             table_map usable_tables);
 static bool pull_out_semijoin_tables(JOIN *join);
 static void add_loose_index_scan_and_skip_scan_keys(JOIN *join,
@@ -8148,7 +8149,7 @@ static bool add_ft_keys(Key_use_array *keyuse_array, Item *cond,
   @retval false  no error (a Key_use may or may not have been added)
   @retval true   out of memory while adding the Key_use
 */
-static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
+static bool add_vector_keys(THD *thd, Key_use_array *keyuse_array, JOIN *join,
                             table_map usable_tables) {
   auto order = join->order.order;
   if (order == nullptr || order->next != nullptr ||
@@ -8171,17 +8172,35 @@ static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
   const auto arg1 = dist_fn->arguments()[0]->real_item();
   const auto arg2 = dist_fn->arguments()[1]->real_item();
 
-  Item *const_vector_expr;
+  Item *vector_expr;
   const Field *column;
   if (arg1->type() == Item::FIELD_ITEM && arg2->const_for_execution()) {
     column = down_cast<Item_field *>(arg1)->field;
-    const_vector_expr = arg2;
+    vector_expr = arg2;
   } else if (arg2->type() == Item::FIELD_ITEM && arg1->const_for_execution()) {
     column = down_cast<Item_field *>(arg2)->field;
-    const_vector_expr = arg1;
+    vector_expr = arg1;
   } else {
     return false;
   }
+
+  if (vector_expr->type() != Item::FUNC_ITEM) return false;
+  if (auto vector_func = down_cast<Item_func *>(vector_expr);
+      vector_func->func_name() != std::string_view("to_vector")) {
+    return false;
+  } else {
+    if (vector_func->arguments()[0]->type() != Item::STRING_ITEM) return false;
+    String buffer;
+    const String *query_vector = vector_expr->val_str(&buffer);
+    if (query_vector == nullptr) return false;
+    if (get_dimensions(query_vector->length(), Field_vector::precision) !=
+        get_dimensions(column->field_length, Field_vector::precision)) {
+      my_error(ER_WRONG_ARGUMENTS, MYF(0), vector_func->func_name());
+      return true;
+    }
+  }
+
+  if (!vector_expr->may_evaluate_const(thd)) return false;
 
   if (column->type() != MYSQL_TYPE_VECTOR) return false;
 
@@ -8192,6 +8211,7 @@ static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
   for (uint idx = 0; idx < table->s->keys; ++idx) {
     const KEY &index = table->key_info[idx];
     if ((index.flags & HA_VECTOR) && table->keys_in_use_for_query.is_set(idx) &&
+        table->keys_in_use_for_order_by.is_set(idx) &&
         index.key_part[0].field->eq(column)) {
       // Store the full table row count (not the query LIMIT) so the join
       // planner costs a vector scan LIMIT-agnostically, like any other
@@ -8199,8 +8219,7 @@ static bool add_vector_keys(Key_use_array *keyuse_array, JOIN *join,
       // scan is applied separately in test_if_cheaper_ordering().
       const ha_rows row_count = table->file->stats.records;
 
-      const Key_use keyuse(tl, const_vector_expr,
-                           const_vector_expr->used_tables(), idx,
+      const Key_use keyuse(tl, vector_expr, vector_expr->used_tables(), idx,
                            VECTOR_KEYPART,
                            0,          // optimize
                            0,          // keypart_map
@@ -8702,7 +8721,7 @@ static bool update_ref_and_keys(THD *thd, Key_use_array *keyuse,
     if (add_ft_keys(keyuse, cond, normal_tables, true)) return true;
   }
 
-  if (add_vector_keys(keyuse, query_block->join, normal_tables)) return true;
+  if (add_vector_keys(thd, keyuse, query_block->join, normal_tables)) return true;
 
   /*
     Sort the array of possible keys and remove the following key parts:

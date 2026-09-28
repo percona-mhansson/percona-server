@@ -309,7 +309,58 @@ INSERT INTO t1 VALUES
 
 ANALYZE TABLE t1;
 
-EXPLAIN ANALYZE FORMAT=TREE SELECT id, v FROM t1 WHERE v = to_vector('[0, 0]');
+--replace_regex /cost=[0-9.e+-]+ /cost=X /
+EXPLAIN FORMAT=TREE SELECT id, v FROM t1 WHERE v = to_vector('[0, 0]');
+
+
+--echo # Old hints
+
+--replace_regex /cost=[0-9.e+-]+ /cost=X /
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 FORCE INDEX (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 IGNORE INDEX (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean')
+LIMIT 3;
+
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 IGNORE INDEX FOR ORDER BY (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean')
+LIMIT 3;
+
+
+
+--echo # New hints
+
+--replace_regex /cost=[0-9.e+-]+ /cost=X /
+EXPLAIN FORMAT=TREE
+SELECT /*+ index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+
+--replace_regex /cost=[0-9.e+-]+ /cost=X /
+EXPLAIN FORMAT=TREE
+SELECT /*+ no_index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+
+
+--error ER_WRONG_ARGUMENTS
+SELECT id FROM t1 ORDER BY DISTANCE(v, to_vector('[1, 1, 1]'), 'euclidean');
+
+
+SET @vector_expr = to_vector('[1, 1]');
+
+--replace_regex /cost=[0-9.e+-]+ /cost=X /
+EXPLAIN FORMAT=TREE
+SELECT /*+ index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, @vector_expr, 'euclidean');
 
 SET SESSION optimizer_trace = 'enabled=on';
 

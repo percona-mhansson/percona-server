@@ -463,10 +463,67 @@ INSERT INTO t1 VALUES
 ANALYZE TABLE t1;
 Table	Op	Msg_type	Msg_text
 test.t1	analyze	status	OK
-EXPLAIN ANALYZE FORMAT=TREE SELECT id, v FROM t1 WHERE v = to_vector('[0, 0]');
+EXPLAIN FORMAT=TREE SELECT id, v FROM t1 WHERE v = to_vector('[0, 0]');
 EXPLAIN
--> Filter: (t1.v = <cache>(to_vector('[0, 0]')))  (cost=1.25 rows=1) (actual time=0.0646..0.243 rows=1 loops=1)
-    -> Table scan on t1  (cost=1.25 rows=10) (actual time=0.0583..0.232 rows=10 loops=1)
+-> Filter: (t1.v = <cache>(to_vector('[0, 0]')))  (cost=X rows=1)
+    -> Table scan on t1  (cost=X rows=10)
+
+# Old hints
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 FORCE INDEX (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+EXPLAIN
+-> Sort: distance(t1.v,to_vector('[1, 1]'),'euclidean')  (cost=X rows=10e+99)
+    -> Vector index search on t1 using v (v = to_vector('[1, 1]'))  (cost=X rows=10e+99)
+
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 IGNORE INDEX (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean')
+LIMIT 3;
+EXPLAIN
+-> Limit: 3 row(s)  (cost=1.25 rows=3)
+    -> Sort: distance(t1.v,to_vector('[1, 1]'),'euclidean'), limit input to 3 row(s) per chunk  (cost=1.25 rows=10)
+        -> Table scan on t1  (cost=1.25 rows=10)
+
+EXPLAIN FORMAT=TREE
+SELECT id
+FROM t1 IGNORE INDEX FOR ORDER BY (v)
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean')
+LIMIT 3;
+EXPLAIN
+-> Limit: 3 row(s)  (cost=1.25 rows=3)
+    -> Sort: distance(t1.v,to_vector('[1, 1]'),'euclidean'), limit input to 3 row(s) per chunk  (cost=1.25 rows=10)
+        -> Table scan on t1  (cost=1.25 rows=10)
+
+# New hints
+EXPLAIN FORMAT=TREE
+SELECT /*+ index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+EXPLAIN
+-> Sort: distance(t1.v,to_vector('[1, 1]'),'euclidean')  (cost=X rows=10e+99)
+    -> Vector index search on t1 using v (v = to_vector('[1, 1]'))  (cost=X rows=10e+99)
+
+EXPLAIN FORMAT=TREE
+SELECT /*+ no_index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, to_vector('[1, 1]'), 'euclidean');
+EXPLAIN
+-> Sort: distance(t1.v,to_vector('[1, 1]'),'euclidean')  (cost=X rows=10)
+    -> Table scan on t1  (cost=X rows=10)
+
+SELECT id FROM t1 ORDER BY DISTANCE(v, to_vector('[1, 1, 1]'), 'euclidean');
+ERROR HY000: Incorrect arguments to to_vector
+SET @vector_expr = to_vector('[1, 1]');
+EXPLAIN FORMAT=TREE
+SELECT /*+ index(t1 v) */ id
+FROM t1
+ORDER BY DISTANCE(v, @vector_expr, 'euclidean');
+EXPLAIN
+-> Sort: distance(t1.v,(@vector_expr),'euclidean')  (cost=X rows=10)
+    -> Table scan on t1  (cost=X rows=10)
 
 SET SESSION optimizer_trace = 'enabled=on';
 # Non-selective predicate -> full scan, c_idx stays in const_keys.

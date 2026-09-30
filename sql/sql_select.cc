@@ -130,6 +130,7 @@
 #include "sql_string.h"
 #include "template_utils.h"
 #include "thr_lock.h"
+#include "vector-common/vector_constants.h"  // prohibitive_cost
 
 using std::max;
 using std::min;
@@ -5299,18 +5300,12 @@ bool test_if_cheaper_ordering(const JOIN_TAB *tab, ORDER_with_src *order,
     if (vector_key != nullptr && order->src == ESC_ORDER_BY &&
         !tab->join()->select_distinct) {
       if (select_limit < table_records) {
-        const constexpr double default_vector_size = 2096;
-        const constexpr double page_size = 4096;
-        const double vector_scan_time =
-            select_limit *
-            table->file->page_read_cost(nr, default_vector_size / page_size);
-
         best_key = nr;
         best_key_parts = 1;
         if (saved_best_key_parts) *saved_best_key_parts = 1;
         best_key_direction = 1;
         best_records = static_cast<ha_rows>(select_limit);
-        best_read_time = vector_scan_time;
+        best_read_time = vector_constants::prohibitive_cost;
         best_select_limit = select_limit;
         is_best_covering = false;
       }

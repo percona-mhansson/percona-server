@@ -34,6 +34,7 @@
 
 #include "sql/sql_optimizer.h"
 #include "my_base.h"
+#include "sql/sql_opt_exec_shared.h"
 #include "sql/sql_optimizer_internal.h"
 
 #include <limits.h>
@@ -2551,16 +2552,6 @@ static bool test_if_skip_sort_order(JOIN_TAB *tab, ORDER_with_src &order,
                                &select_limit, &best_key_parts,
                                &saved_best_key_parts, &best_read_time);
 
-    // A vector index answers the ORDER BY directly; set up JT_VECTOR access.
-    bool is_vector = false;
-    if (!no_changes &&
-        setup_vector_index_access(thd, tab, best_key, select_limit, &is_vector))
-      return false;
-    if (is_vector) {
-      can_skip_sorting = true;
-      goto fix_ICP;
-    }
-
     // Try backward scan for previously found key
     if (best_key < 0 && order_direction < 0) goto check_reverse_order;
 
@@ -2741,12 +2732,28 @@ check_reverse_order:
         and best_key doesn't, then revert the decision.
       */
       if (!table->covering_keys.is_set(best_key)) table->set_keyread(false);
-      // Create an index scan if the table is not a temporary table that uses
-      // Temptable engine (Does not support index_first() and index_last()) and
-      // if there was no new range scan created.
-      if (!(is_temporary_table(tab->table_ref) &&
-            tab->table_ref->table->s->db_type() == temptable_hton) &&
-          ((!tab->range_scan() || tab->range_scan() == save_range_scan))) {
+      // A vector index answers the ORDER BY directly; set up JT_VECTOR access.
+      bool is_vector = false;
+      if (setup_vector_index_access(thd, tab, best_key, select_limit,
+                                    &is_vector)) {
+        can_skip_sorting = false;
+        goto fix_ICP;
+      }
+      if (is_vector) {
+        // The vector search replaces any range scan chosen earlier. The
+        // range optimizer never picks a vector index, so the only range scan
+        // that can exist here is the original one.
+        assert(tab->range_scan() == save_range_scan);
+        tab->set_range_scan(nullptr);
+        table->file->ha_index_or_rnd_end();
+        tab->position()->filter_effect = COND_FILTER_STALE;
+      } else if (!(is_temporary_table(tab->table_ref) &&
+                   tab->table_ref->table->s->db_type() == temptable_hton) &&
+                 (!tab->range_scan() ||
+                  tab->range_scan() == save_range_scan)) {
+        // Create an index scan if the table is not a temporary table that
+        // uses Temptable engine (Does not support index_first() and
+        // index_last()) and if there was no new range scan created.
         // Avoid memory leak:
         assert(tab->range_scan() == save_range_scan ||
                tab->range_scan() == nullptr);
@@ -2829,7 +2836,7 @@ fix_ICP:
     at this point. Delete the one that we won't use.
   */
   if (can_skip_sorting && !no_changes) {
-    if (tab->type() == JT_INDEX_SCAN &&
+    if ((tab->type() == JT_INDEX_SCAN || tab->type() == JT_VECTOR) &&
         select_limit < table->file->stats.records) {
       assert(select_limit > 0);
       tab->position()->rows_fetched = select_limit;
@@ -2854,8 +2861,9 @@ fix_ICP:
         // Update the cost values accordingly.
         tab->position()->set_prefix_join_cost(tab->idx(), join->cost_model());
       }
-      // Update filter effect to reflect the access change.
-      tab->position()->filter_effect = COND_FILTER_STALE_NO_CONST;
+      if (tab->type() == JT_VECTOR) {
+        tab->position()->read_cost = best_read_time;
+      }
     }
 
     // Keep current (ordered) tab->range_scan()

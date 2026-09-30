@@ -80,6 +80,7 @@
 #include "sql/table.h"
 #include "sql/window.h"
 #include "sql_string.h"
+#include "vector-common/vector_constants.h"  // prohibitive_cost
 
 using std::max;
 using std::min;
@@ -709,13 +710,8 @@ Key_use *Optimize_table_order::find_best_ref(
         continue;
       }
 
-      // We never intend for the cost-based optimizer to pick a vector index, so
-      // we just set them to an arbitrary high value. We could set them to
-      // std::numeric_limits<double>::max(), but that causes problems with
-      // overflow.
-
-      cur_read_cost = 1e100;
-      cur_fanout = 1e100;
+      cur_read_cost = vector_constants::prohibitive_cost;
+      cur_fanout = vector_constants::prohibitive_cost;
     }
 
     start_key->bound_keyparts = found_part;
